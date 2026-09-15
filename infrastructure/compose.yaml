@@ -1,0 +1,148 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: agro-mosquitto
+    restart: unless-stopped
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/config/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/certs:/mosquitto/certs:ro
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    networks:
+      - agro-network
+
+  influxdb:
+    image: influxdb:2.9.1
+    container_name: agro-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_ORG: agro-telemetry
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+      DOCKER_INFLUXDB_INIT_RETENTION: 720h
+      DOCKER_INFLUXDB_INIT_USERNAME_FILE: /run/secrets/influxdb-username
+      DOCKER_INFLUXDB_INIT_PASSWORD_FILE: /run/secrets/influxdb-password
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN_FILE: /run/secrets/influxdb-token
+    secrets:
+      - influxdb-username
+      - influxdb-password
+      - influxdb-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping", "--host", "http://localhost:8086"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - agro-network
+
+  gateway:
+    build:
+      context: ../gateway
+      dockerfile: Dockerfile
+    container_name: agro-gateway
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+      - influxdb
+    environment:
+      MQTT_BROKER_URI: ssl://mosquitto:8883
+      MQTT_CLIENT_ID: agro-gateway-01
+      MQTT_TOPIC: agro/devices/+/telemetry
+      MQTT_QOS: "1"
+      MQTT_CA_FILE: /etc/agro/ca.crt
+      MQTT_USERNAME: agro-gateway
+      MQTT_PASSWORD_FILE: /run/secrets/mqtt-gateway-password
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: agro-telemetry
+      INFLUX_BUCKET: telemetry
+      INFLUX_TOKEN_FILE: /run/secrets/influxdb-token
+      INFLUX_QUEUE_CAPACITY: "1000"
+      INFLUX_BATCH_SIZE: "10"
+      INFLUX_FLUSH_INTERVAL_MS: "1000"
+      INFLUX_RETRY_MAX_SECONDS: "30"
+    volumes:
+      - ./mosquitto/certs/ca.crt:/etc/agro/ca.crt:ro
+    secrets:
+      - influxdb-token
+      - mqtt-gateway-password
+    networks:
+      - agro-network
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    container_name: agro-grafana
+    restart: unless-stopped
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        INFLUXDB_GRAFANA_TOKEN="$$(cat /run/secrets/grafana-influxdb-token)"
+        export INFLUXDB_GRAFANA_TOKEN
+        exec /run.sh
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/agro-telemetry.json
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    secrets:
+      - grafana-admin-password
+      - grafana-influxdb-token
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://localhost:3000/api/health || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - agro-network
+
+secrets:
+  influxdb-username:
+    file: ./secrets/influxdb-username.txt
+  influxdb-password:
+    file: ./secrets/influxdb-password.txt
+  influxdb-token:
+    file: ./secrets/influxdb-token.txt
+  grafana-admin-password:
+    file: ./secrets/grafana-admin-password.txt
+  grafana-influxdb-token:
+    file: ./secrets/grafana-influxdb-token.txt
+  mqtt-gateway-password:
+    file: ./secrets/mqtt-gateway-password.txt
+
+volumes:
+  influxdb-data:
+    name: agro-influxdb-data
+  influxdb-config:
+    name: agro-influxdb-config
+  grafana-data:
+    name: agro-grafana-data
+
+networks:
+  agro-network:
+    name: agro-network

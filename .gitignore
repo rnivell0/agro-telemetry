@@ -1,0 +1,16 @@
+# Firmware (ESP-IDF)
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig.old
+
+# sdkconfig holds real Wi-Fi and MQTT credentials in plain text for this
+# project. Keep it local; a fresh clone regenerates it via menuconfig,
+# using the placeholders already declared in Kconfig.projbuild.
+firmware/sdkconfig
+
+# Gateway (only relevant if it's ever built outside Docker)
+gateway/build/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

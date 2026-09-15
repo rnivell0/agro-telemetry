@@ -1,0 +1,20 @@
+apiVersion: 1
+
+prune: true
+
+datasources:
+  - name: Agro InfluxDB
+    uid: agro-influxdb
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    editable: false
+    jsonData:
+      version: Flux
+      organization: agro-telemetry
+      defaultBucket: telemetry
+      minInterval: 1s
+    secureJsonData:
+      token: $INFLUXDB_GRAFANA_TOKEN
+    version: 1
