@@ -5,7 +5,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
-#include "dht11_sensor.hpp"
+#include "dht22_sensor.hpp"
 
 class SensorTask {
 public:
@@ -23,5 +23,5 @@ private:
 
     QueueHandle_t telemetry_queue_;
     TaskHandle_t task_handle_{nullptr};
-    Dht11Sensor dht11_sensor_;
+    Dht22Sensor dht22_sensor_;
 };

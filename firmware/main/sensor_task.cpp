@@ -14,7 +14,7 @@ constexpr char TAG[] = "SENSOR";
 constexpr std::uint32_t TASK_STACK_SIZE = 2048;
 constexpr UBaseType_t TASK_PRIORITY = 5;
 constexpr std::uint32_t SENSOR_PERIOD_MS = 2000;
-constexpr gpio_num_t DHT11_DATA_PIN = GPIO_NUM_4;
+constexpr gpio_num_t DHT22_DATA_PIN = GPIO_NUM_4;
 
 // La tarea alimenta al watchdog una vez por período: con menos de la mitad
 // del timeout queda margen para una lectura lenta sin reiniciar la placa.
@@ -25,7 +25,7 @@ static_assert(SENSOR_PERIOD_MS < CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000U / 2,
 
 SensorTask::SensorTask(QueueHandle_t telemetry_queue)
     : telemetry_queue_{telemetry_queue},
-      dht11_sensor_{DHT11_DATA_PIN}
+      dht22_sensor_{DHT22_DATA_PIN}
 {
 }
 
@@ -81,12 +81,12 @@ void SensorTask::run()
     while (true) {
         esp_task_wdt_reset();
 
-        Dht11Reading reading{};
-        const esp_err_t read_result = dht11_sensor_.read(reading);
+        Dht22Reading reading{};
+        const esp_err_t read_result = dht22_sensor_.read(reading);
 
         if (read_result != ESP_OK) {
             ESP_LOGW(TAG,
-                     "Lectura de DHT11 fallida: %s",
+                     "Lectura de DHT22 fallida: %s",
                      esp_err_to_name(read_result));
         } else {
             TelemetryData measurement{
@@ -119,8 +119,8 @@ void SensorTask::run()
         /*
          * A diferencia de vTaskDelay(), vTaskDelayUntil() toma como referencia
          * el instante programado anterior y evita acumular tiempo de ejecución.
-         * El DHT11 no admite lecturas más frecuentes que una por segundo, así
-         * que este período también respeta esa limitación del sensor.
+         * El DHT22 admite como máximo una lectura cada 2 segundos: este
+         * período está justo en ese límite.
          */
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(SENSOR_PERIOD_MS));
     }
