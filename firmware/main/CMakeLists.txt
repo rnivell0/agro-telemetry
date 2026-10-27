@@ -1,4 +1,5 @@
 idf_component_register(SRCS "oled_display.cpp" "dht22_sensor.cpp" "main.cpp"
+                            "device_id.cpp"
                             "mqtt_client.cpp"
                             "sensor_task.cpp"
                             "task_monitor.cpp"

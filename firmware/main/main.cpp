@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
+#include "device_id.hpp"
 #include "mqtt_client.hpp"
 #include "oled_display.hpp"
 #include "sensor_task.hpp"
@@ -50,7 +51,18 @@ extern "C" void app_main()
         return;
     }
 
-    static MqttClient mqtt_client{wifi_manager};
+    // Sin identidad no se puede publicar: el ID va en el client ID, el
+    // topic y el JSON.
+    static DeviceId device_id{};
+    const esp_err_t id_result = read_device_id(device_id);
+    if (id_result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "No se pudo leer el MAC para identificar el nodo: %s",
+                 esp_err_to_name(id_result));
+        return;
+    }
+
+    static MqttClient mqtt_client{wifi_manager, device_id};
     const esp_err_t mqtt_result = mqtt_client.start();
     if (mqtt_result != ESP_OK) {
         ESP_LOGE(TAG,

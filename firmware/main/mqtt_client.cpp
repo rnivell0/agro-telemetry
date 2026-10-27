@@ -35,9 +35,14 @@ extern const std::uint8_t mqtt_ca_pem_start[] asm(
 extern const std::uint8_t mqtt_ca_pem_end[] asm("_binary_mqtt_ca_pem_end");
 }
 
-MqttClient::MqttClient(const WifiManager &wifi_manager)
-    : wifi_manager_{wifi_manager}
+MqttClient::MqttClient(const WifiManager &wifi_manager,
+                       const DeviceId &device_id)
+    : wifi_manager_{wifi_manager}, device_id_{device_id}
 {
+    std::snprintf(telemetry_topic_.data(),
+                  telemetry_topic_.size(),
+                  "agro/devices/%s/telemetry",
+                  device_id_.data());
 }
 
 MqttClient::~MqttClient()
@@ -132,7 +137,7 @@ esp_err_t MqttClient::initialize()
     configuration.broker.address.uri = CONFIG_AGRO_MQTT_BROKER_URI;
     configuration.broker.verification.certificate =
         reinterpret_cast<const char *>(mqtt_ca_pem_start);
-    configuration.credentials.client_id = CONFIG_AGRO_MQTT_CLIENT_ID;
+    configuration.credentials.client_id = device_id_.data();
     configuration.credentials.username = CONFIG_AGRO_MQTT_USERNAME;
     configuration.credentials.authentication.password =
         CONFIG_AGRO_MQTT_PASSWORD;
@@ -170,10 +175,12 @@ esp_err_t MqttClient::initialize()
     }
 
     ESP_LOGI(TAG,
-             "Cliente preparado | Broker: %s | Client ID: %s | Usuario: %s",
+             "Cliente preparado | Broker: %s | Client ID: %s | Usuario: %s"
+             " | Topic: %s",
              CONFIG_AGRO_MQTT_BROKER_URI,
-             CONFIG_AGRO_MQTT_CLIENT_ID,
-             CONFIG_AGRO_MQTT_USERNAME);
+             device_id_.data(),
+             CONFIG_AGRO_MQTT_USERNAME,
+             telemetry_topic_.data());
     return ESP_OK;
 }
 
@@ -293,7 +300,7 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
         "{\"device_id\":\"%s\",\"sequence\":%" PRIu32
         ",\"temperature_c\":%.1f,\"humidity_pct\":%.1f,"
         "\"uptime_ms\":%" PRIu64 "}",
-        CONFIG_AGRO_MQTT_CLIENT_ID,
+        device_id_.data(),
         measurement.sequence,
         static_cast<double>(measurement.temperature_c),
         static_cast<double>(measurement.humidity_percent),
@@ -314,7 +321,7 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
      */
     const int message_id = esp_mqtt_client_enqueue(
         client_,
-        CONFIG_AGRO_MQTT_TELEMETRY_TOPIC,
+        telemetry_topic_.data(),
         payload,
         payload_length,
         MQTT_QOS,

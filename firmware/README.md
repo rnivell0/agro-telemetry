@@ -7,11 +7,12 @@ ESP-IDF 6.0.2 project for an ESP32 DevKit V1 (30 pins). It reads a DHT22 every 2
 From this folder, with the ESP-IDF environment active:
 
 ```sh
-idf.py menuconfig          # Agro Telemetry → Wi-Fi SSID/password, broker URI, MQTT user/password, topic
+idf.py menuconfig          # Agro Telemetry → Wi-Fi SSID/password, broker URI, shared MQTT user/password
 idf.py build
 idf.py -p <PORT> flash monitor
 ```
 
+- Every board gets the same build. Each one derives its ID from its factory MAC (`esp32-` + last three bytes) and logs it at boot: `Identidad del nodo: esp32-1e1574 (MAC ...)`. Write it on a label on the board.
 - The broker URI must be the LAN address of the machine running Mosquitto (`mqtts://<ip>:8883`), not `localhost`.
 - `main/certs/mqtt_ca.pem` must be the CA that signed the broker's certificate. It is embedded in the binary.
 - Flash is 4 MB with ESP-IDF's "two OTA large" partition table: two 1700 KB app slots, about half used. There is no OTA code yet, so the board always boots from `ota_0`; the second slot is reserved for over-the-air updates.
@@ -44,6 +45,7 @@ The first three tasks are subscribed to the task watchdog (5 s, panic and reboot
 | `dht22_sensor.*` | Bit-banged single-wire driver, open-drain pin, full checksum |
 | `oled_display.*` | SSD1306 over the ESP-IDF 6 `i2c_master` driver, with a custom 3×5 font and a bus scan for diagnostics |
 | `task_monitor.*` | `uxTaskGetSystemState()` report. Needs `CONFIG_FREERTOS_USE_TRACE_FACILITY`. |
+| `device_id.*` | Reads the factory MAC from eFuse and builds the node ID used as client ID, topic and `device_id` |
 | `telemetry_data.hpp` | The plain struct copied through the sensor queue |
 
 ## Wiring

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <type_traits>
@@ -11,6 +12,7 @@
 #include "freertos/task.h"
 #include "mqtt_client.h"
 
+#include "device_id.hpp"
 #include "telemetry_data.hpp"
 
 class WifiManager;
@@ -27,7 +29,7 @@ class WifiManager;
  */
 class MqttClient {
 public:
-    explicit MqttClient(const WifiManager &wifi_manager);
+    MqttClient(const WifiManager &wifi_manager, const DeviceId &device_id);
     ~MqttClient();
 
     MqttClient(const MqttClient &) = delete;
@@ -82,6 +84,10 @@ private:
     void post_event(MessageType type);
 
     const WifiManager &wifi_manager_;
+    // Copias propias: ESP-MQTT y cada publicación los usan mientras viva
+    // el cliente.
+    DeviceId device_id_;
+    std::array<char, 48> telemetry_topic_{};
     TaskHandle_t task_handle_{nullptr};
     QueueHandle_t queue_{nullptr};
 

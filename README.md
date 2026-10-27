@@ -12,7 +12,7 @@ flowchart LR
     I --> F[Grafana]
 ```
 
-Everything to the right of the ESP32 runs on one machine with Docker Compose. The status is honest: this is a bench prototype with a single node powered over USB, not a field deployment.
+Everything to the right of the ESP32 runs on one machine with Docker Compose. The status is honest: this is a bench prototype with two nodes powered over USB, not a field deployment.
 
 > Code comments, log messages and commit messages are in Spanish; this README is in English.
 
@@ -30,6 +30,7 @@ Everything to the right of the ESP32 runs on one machine with Docker Compose. Th
 
 Three application tasks, all at priority 5 on a dual-core ESP32, communicating only through FreeRTOS queues that copy data by value — no shared memory, no mutexes:
 
+- **Identity from the MAC address.** Every board runs the same binary. At boot it reads its factory MAC from eFuse and names itself `esp32-` plus the last three bytes (for example `esp32-1e1574`). That ID is its MQTT client ID, part of its topic and the `device_id` in each payload, so a new board shows up in Grafana with no per-board configuration.
 - **`SensorTask`** reads the DHT22 every 2 s with `vTaskDelayUntil()` so the period does not drift, and pushes each reading into a 5-slot queue. If the queue is full it drops the new sample and logs it, rather than blocking the sampling loop.
 - **`TelemetryTask`** takes readings from that queue, logs them, hands them to the MQTT client and draws them on the OLED.
 - **`MqttClient`** owns its own task, which is the *only* code that touches the ESP-MQTT client and its connection state. Network events (from the ESP-IDF event loop), MQTT events (from ESP-MQTT's internal task) and publish requests all arrive as messages on one queue and are processed in order, so no decision — such as starting the transport — can be taken from two tasks at once.
@@ -79,10 +80,10 @@ The same value changes name between layers on purpose, following each layer's co
 | Gateway (C++ struct) | `humidityPct` |
 | InfluxDB (line protocol field) | `humidity_pct` |
 
-Example payload on `agro/devices/esp32-node-01/telemetry`:
+Example payload on `agro/devices/esp32-1e1574/telemetry`:
 
 ```json
-{"device_id":"esp32-node-01","sequence":14,"temperature_c":24.5,"humidity_pct":45.7,"uptime_ms":29367}
+{"device_id":"esp32-1e1574","sequence":14,"temperature_c":24.5,"humidity_pct":45.7,"uptime_ms":29367}
 ```
 
 The gateway rejects a message unless `device_id` is non-empty, `temperature_c` is finite and `humidity_pct` is within 0–100. Sequence gaps are logged as warnings, since a lost packet or a reboot explains them.
@@ -112,7 +113,7 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 
 
 Copy `ca.crt` to `firmware/main/certs/mqtt_ca.pem`.
 
-**2. MQTT users.** Create `infrastructure/mosquitto/config/passwd` with two users, `esp32-node-01` and `agro-gateway`, using `mosquitto_passwd`. The container's `mosquitto` user must be able to read the file. If it can't, Mosquitto exits and the reason appears only in `infrastructure/mosquitto/log/mosquitto.log`, not in `docker logs`.
+**2. MQTT users.** Create `infrastructure/mosquitto/config/passwd` with two users, `esp32-node-01` and `agro-gateway`, using `mosquitto_passwd`. Every node logs in as `esp32-node-01` for now: nodes are told apart by their client ID, not by their user. The container's `mosquitto` user must be able to read the file. If it can't, Mosquitto exits and the reason appears only in `infrastructure/mosquitto/log/mosquitto.log`, not in `docker logs`.
 
 **3. Secrets.** Create the files listed in [`infrastructure/secrets/README.md`](infrastructure/secrets/README.md), plus `mqtt-gateway-password.txt` with the gateway's MQTT password.
 
@@ -126,7 +127,7 @@ docker compose logs -f gateway
 
 Grafana is at http://localhost:3000.
 
-**5. Firmware.** See [`firmware/README.md`](firmware/README.md). In short: set Wi-Fi and MQTT settings in `idf.py menuconfig` under *Agro Telemetry*, then run `idf.py -p <PORT> flash monitor`.
+**5. Firmware.** See [`firmware/README.md`](firmware/README.md). In short: set the Wi-Fi network, broker URI and the shared MQTT user and password in `idf.py menuconfig` under *Agro Telemetry*, then run `idf.py -p <PORT> flash monitor` on each board. The same build works for every node.
 
 **Gateway tests** without Docker:
 
@@ -139,7 +140,8 @@ ctest --test-dir build --output-on-failure
 
 ## Known limitations
 
-- One node, on the bench, powered over USB.
+- Two nodes, on the bench, powered over USB.
+- All nodes share one MQTT user, and the broker does not yet restrict each node to its own topic, so any node could publish as another.
 - Server-side TLS only: the broker is verified, clients authenticate with passwords, not certificates.
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
 - A brief Wi-Fi drop that leaves the TCP connection alive could leave the firmware believing it is disconnected. This was found by reading the code and has not been observed.
