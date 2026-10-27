@@ -144,7 +144,6 @@ ctest --test-dir build --output-on-failure
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
 - A brief Wi-Fi drop that leaves the TCP connection alive could leave the firmware believing it is disconnected. This was found by reading the code and has not been observed.
 - InfluxDB keeps 30 days of data.
-- The firmware is configured for 2 MB of flash, but the board has 4 MB. The app partition has about 10 % free, which is the next thing to fix before adding features.
 
 ## What's next
 
