@@ -46,7 +46,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
         "y": 0
@@ -119,7 +119,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
         "y": 0
@@ -159,47 +159,222 @@
         "type": "influxdb",
         "uid": "agro-influxdb"
       },
+      "description": "Último valor de cada nodo. Una fila por nodo: escala a cualquier cantidad de placas.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 1,
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "text",
                 "value": null
               }
             ]
-          },
-          "unit": "celsius",
-          "displayName": "${__field.labels.device}"
+          }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "device"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Nodo"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "temperature_c"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Temperatura"
+              },
+              {
+                "id": "unit",
+                "value": "celsius"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "humidity_pct"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Humedad"
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 70
+                    },
+                    {
+                      "color": "red",
+                      "value": 85
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "age_s"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Último mensaje"
+              },
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 10
+                    },
+                    {
+                      "color": "red",
+                      "value": 30
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sequence"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Secuencia"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "uptime_ms"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Uptime"
+              },
+              {
+                "id": "unit",
+                "value": "dtdurationms"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 5,
-        "w": 4,
+        "h": 8,
+        "w": 24,
         "x": 0,
-        "y": 8
+        "y": 10
       },
-      "id": 3,
+      "id": 8,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
+        "cellHeight": "md",
+        "showHeader": true,
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
           ],
-          "fields": "",
-          "values": false
+          "fields": ""
         },
-        "textMode": "value_and_name",
-        "wideLayout": true
+        "sortBy": [
+          {
+            "displayName": "Nodo",
+            "desc": false
+          }
+        ]
       },
       "targets": [
         {
@@ -207,271 +382,29 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"temperature_c\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
-          "refId": "A"
+          "refId": "A",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nlatest = from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"device_telemetry\" and contains(value: r.device_id, set: ${device_id:json}))\n  |> filter(fn: (r) => r._field == \"temperature_c\" or r._field == \"humidity_pct\" or r._field == \"sequence\" or r._field == \"uptime_ms\")\n  |> last()\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n\n// Antigüedad del último mensaje de cada nodo, en segundos.\nage = latest\n  |> filter(fn: (r) => r._field == \"sequence\")\n  |> map(fn: (r) => ({r with _field: \"age_s\", _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0}))\n\nunion(tables: [latest, age])\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group()\n  |> pivot(rowKey: [\"device\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"device\", \"temperature_c\", \"humidity_pct\", \"age_s\", \"sequence\", \"uptime_ms\"])"
         }
       ],
-      "title": "Temperatura actual",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "agro-influxdb"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 1,
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 70
-              },
-              {
-                "color": "red",
-                "value": 85
-              }
-            ]
-          },
-          "unit": "percent",
-          "displayName": "${__field.labels.device}"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 4,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "targets": [
+      "title": "Estado por nodo",
+      "transformations": [
         {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "agro-influxdb"
-          },
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"humidity_pct\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
-          "refId": "A"
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "device": 0,
+              "temperature_c": 1,
+              "humidity_pct": 2,
+              "age_s": 3,
+              "sequence": 4,
+              "uptime_ms": 5
+            }
+          }
         }
       ],
-      "title": "Humedad actual",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "agro-influxdb"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "none",
-          "displayName": "${__field.labels.device}"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 8,
-        "y": 8
-      },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "agro-influxdb"
-          },
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"sequence\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
-          "refId": "A"
-        }
-      ],
-      "title": "Última secuencia",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "agro-influxdb"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "dtdurationms",
-          "displayName": "${__field.labels.device}"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 12,
-        "y": 8
-      },
-      "id": 6,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "agro-influxdb"
-          },
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"uptime_ms\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
-          "refId": "A"
-        }
-      ],
-      "title": "Uptime",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "influxdb",
-        "uid": "agro-influxdb"
-      },
-      "description": "Segundos transcurridos desde la última medición recibida.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 30
-              }
-            ]
-          },
-          "unit": "dtdurations",
-          "displayName": "${__field.labels.device}"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 8,
-        "x": 16,
-        "y": 8
-      },
-      "id": 7,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "agro-influxdb"
-          },
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"sequence\"\n  )\n  |> last()\n  |> map(fn: (r) => ({ r with _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0 }))\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
-          "refId": "A"
-        }
-      ],
-      "title": "Último mensaje",
-      "type": "stat"
+      "type": "table"
     }
   ],
   "refresh": "5s",
@@ -505,7 +438,7 @@
         "options": [],
         "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: v.defaultBucket, tag: \"device_id\", predicate: (r) => r._measurement == \"device_telemetry\", start: -30d)",
         "refresh": 1,
-        "regex": "",
+        "regex": "/^esp32-[0-9a-f]{6}$/",
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
@@ -515,7 +448,7 @@
         "name": "aliases",
         "label": "Alias",
         "hide": 2,
-        "query": "",
+        "query": "esp32-5de31c=Living,esp32-5df414=Baño,esp32-1e1574=Habitación",
         "description": "Nombres amigables opcionales: id=nombre separados por coma, por ejemplo esp32-1e1574=Escritorio,esp32-5de31c=Ventana. Sin comillas. Un nodo sin alias se muestra con su ID.",
         "skipUrlSync": false
       }
@@ -540,6 +473,6 @@
   "timezone": "browser",
   "title": "Agro Telemetry Overview",
   "uid": "agro-telemetry-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
