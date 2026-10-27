@@ -1,4 +1,4 @@
-# Firmware — ESP32 · FreeRTOS · C++
+# Firmware — ESP32 · FreeRTOS · C++20
 
 ESP-IDF 6.0.2 project for an ESP32 DevKit V1 (30 pins). It reads a DHT22 every 2 s, shows the values on an SSD1306 OLED and publishes them over MQTT with TLS. See the [root README](../README.md) for the whole pipeline.
 
@@ -14,6 +14,7 @@ idf.py -p <PORT> flash monitor
 
 - The broker URI must be the LAN address of the machine running Mosquitto (`mqtts://<ip>:8883`), not `localhost`.
 - `main/certs/mqtt_ca.pem` must be the CA that signed the broker's certificate. It is embedded in the binary.
+- The code is C++20 (`gnu++20`), set in `main/CMakeLists.txt` so the build does not depend on the default of the installed ESP-IDF.
 - `sdkconfig` is git-ignored because menuconfig stores the Wi-Fi and MQTT credentials in it in plain text. A fresh clone regenerates it from `sdkconfig.defaults` plus the placeholders in `main/Kconfig.projbuild`.
 - After changing `sdkconfig.defaults`, check that the value actually reached `sdkconfig`, because an existing `sdkconfig` does not always pick up new defaults.
 

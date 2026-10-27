@@ -20,13 +20,13 @@ Everything to the right of the ESP32 runs on one machine with Docker Compose. Th
 
 | Folder | What it is |
 |---|---|
-| [`firmware/`](firmware/) | ESP-IDF 6 project for an ESP32 DevKit V1: FreeRTOS tasks in C++17 |
+| [`firmware/`](firmware/) | ESP-IDF 6 project for an ESP32 DevKit V1: FreeRTOS tasks in C++20 |
 | [`gateway/`](gateway/) | C++17 service: MQTT subscriber → validation → InfluxDB writer, with unit tests |
 | [`infrastructure/`](infrastructure/) | Docker Compose stack: Mosquitto, InfluxDB, gateway, Grafana |
 
 ## How it works
 
-### Firmware (ESP32, FreeRTOS, C++)
+### Firmware (ESP32, FreeRTOS, C++20)
 
 Three application tasks, all at priority 5 on a dual-core ESP32, communicating only through FreeRTOS queues that copy data by value — no shared memory, no mutexes:
 
@@ -56,6 +56,17 @@ Two threads and a bounded queue:
 - **InfluxDB 2** with organization `agro-telemetry`, bucket `telemetry`, 720 h retention.
 - **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket.
 - **Secrets** are individual files mounted as Docker secrets under `/run/secrets/` — never plain environment variables, never baked into an image. Private keys and the Mosquitto password file are git-ignored.
+
+### C++ standards
+
+Each part declares its standard explicitly in its build, instead of inheriting a toolchain default:
+
+| Part | Standard | Why |
+|---|---|---|
+| Firmware | C++20 (`gnu++20`) | The lowest standard the code needs: it uses designated initializers. ESP-IDF 6 would default to `gnu++26`, which would make the build depend on the installed ESP-IDF version. |
+| Gateway | C++17 | Nothing in the code needs more. |
+
+A part moves to a newer standard when a feature pays for itself, not to look modern. The candidates already identified are `std::expected` (C++23), so drivers return a value or an error instead of an error code plus an output parameter, and `std::jthread` with `std::stop_token` (C++20), for the gateway's persistence thread shutdown. `std::format` and exceptions stay out of the firmware because of their code size.
 
 ### Data contract
 
