@@ -40,7 +40,8 @@
             }
           },
           "decimals": 1,
-          "unit": "celsius"
+          "unit": "celsius",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -73,7 +74,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"temperature_c\"\n  )\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"temperature\")",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"temperature_c\"\n  )\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])\n  |> yield(name: \"temperature\")",
           "refId": "A"
         }
       ],
@@ -112,7 +113,8 @@
           "decimals": 1,
           "max": 100,
           "min": 0,
-          "unit": "percent"
+          "unit": "percent",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -145,7 +147,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"humidity_pct\"\n  )\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"humidity\")",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"humidity_pct\"\n  )\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])\n  |> yield(name: \"humidity\")",
           "refId": "A"
         }
       ],
@@ -172,7 +174,8 @@
               }
             ]
           },
-          "unit": "celsius"
+          "unit": "celsius",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -195,7 +198,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "targets": [
@@ -204,7 +207,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"temperature_c\"\n  )\n  |> last()",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"temperature_c\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
           "refId": "A"
         }
       ],
@@ -241,7 +244,8 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percent",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -273,7 +277,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"humidity_pct\"\n  )\n  |> last()",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"humidity_pct\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
           "refId": "A"
         }
       ],
@@ -300,7 +304,8 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "none",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -323,7 +328,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "targets": [
@@ -332,7 +337,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"sequence\"\n  )\n  |> last()",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"sequence\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
           "refId": "A"
         }
       ],
@@ -359,7 +364,8 @@
               }
             ]
           },
-          "unit": "dtdurationms"
+          "unit": "dtdurationms",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -382,7 +388,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "targets": [
@@ -391,7 +397,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"uptime_ms\"\n  )\n  |> last()",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"uptime_ms\"\n  )\n  |> last()\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
           "refId": "A"
         }
       ],
@@ -427,7 +433,8 @@
               }
             ]
           },
-          "unit": "dtdurations"
+          "unit": "dtdurations",
+          "displayName": "${__field.labels.device}"
         },
         "overrides": []
       },
@@ -450,7 +457,7 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "targets": [
@@ -459,7 +466,7 @@
             "type": "influxdb",
             "uid": "agro-influxdb"
           },
-          "query": "from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    r.device_id == \"${device_id}\" and\n    r._field == \"sequence\"\n  )\n  |> last()\n  |> map(fn: (r) => ({ r with _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0 }))",
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"sequence\"\n  )\n  |> last()\n  |> map(fn: (r) => ({ r with _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0 }))\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])",
           "refId": "A"
         }
       ],
@@ -477,15 +484,23 @@
   "templating": {
     "list": [
       {
-        "current": {},
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
         "datasource": {
           "type": "influxdb",
           "uid": "agro-influxdb"
         },
         "definition": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: v.defaultBucket, tag: \"device_id\", predicate: (r) => r._measurement == \"device_telemetry\", start: -30d)",
-        "includeAll": false,
+        "includeAll": true,
         "label": "Dispositivo",
-        "multi": false,
+        "multi": true,
         "name": "device_id",
         "options": [],
         "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: v.defaultBucket, tag: \"device_id\", predicate: (r) => r._measurement == \"device_telemetry\", start: -30d)",
@@ -494,6 +509,15 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "type": "constant",
+        "name": "aliases",
+        "label": "Alias",
+        "hide": 2,
+        "query": "",
+        "description": "Nombres amigables opcionales: id=nombre separados por coma, por ejemplo esp32-1e1574=Escritorio,esp32-5de31c=Ventana. Sin comillas. Un nodo sin alias se muestra con su ID.",
+        "skipUrlSync": false
       }
     ]
   },
@@ -516,6 +540,6 @@
   "timezone": "browser",
   "title": "Agro Telemetry Overview",
   "uid": "agro-telemetry-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

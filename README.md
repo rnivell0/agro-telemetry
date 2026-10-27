@@ -55,7 +55,7 @@ Two threads and a bounded queue:
 
 - **Mosquitto** on port 8883, TLS only, no anonymous access.
 - **InfluxDB 2** with organization `agro-telemetry`, bucket `telemetry`, 720 h retention.
-- **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket.
+- **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket. The dashboard discovers nodes from InfluxDB, shows all of them by default with one line per node, and can show a friendly name per node: edit the hidden `aliases` variable in `infrastructure/grafana/dashboards/agro-telemetry.json` (`esp32-1e1574=Desk,esp32-5de31c=Window`), and Grafana reloads it within 10 s.
 - **Secrets** are individual files mounted as Docker secrets under `/run/secrets/` — never plain environment variables, never baked into an image. Private keys and the Mosquitto password file are git-ignored.
 
 ### C++ standards
