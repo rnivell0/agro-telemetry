@@ -4,7 +4,9 @@
 #include <cstdint>
 
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_timer.h"
+#include "sdkconfig.h"
 #include "telemetry_data.hpp"
 
 namespace {
@@ -13,6 +15,12 @@ constexpr std::uint32_t TASK_STACK_SIZE = 2048;
 constexpr UBaseType_t TASK_PRIORITY = 5;
 constexpr std::uint32_t SENSOR_PERIOD_MS = 2000;
 constexpr gpio_num_t DHT11_DATA_PIN = GPIO_NUM_4;
+
+// La tarea alimenta al watchdog una vez por período: con menos de la mitad
+// del timeout queda margen para una lectura lenta sin reiniciar la placa.
+static_assert(SENSOR_PERIOD_MS < CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000U / 2,
+              "SENSOR_PERIOD_MS tiene que ser menor a la mitad del timeout "
+              "del task watchdog");
 }
 
 SensorTask::SensorTask(QueueHandle_t telemetry_queue)
@@ -24,6 +32,8 @@ SensorTask::SensorTask(QueueHandle_t telemetry_queue)
 SensorTask::~SensorTask()
 {
     if (task_handle_ != nullptr) {
+        // ESP-IDF pide desuscribir la tarea del watchdog antes de borrarla.
+        esp_task_wdt_delete(task_handle_);
         vTaskDelete(task_handle_);
     }
 }
@@ -53,10 +63,24 @@ void SensorTask::task_entry(void *context)
 
 void SensorTask::run()
 {
+    /*
+     * La suscripción se hace desde la propia tarea (nullptr = "la tarea que
+     * llama"): así el watchdog empieza a contar recién cuando la tarea ya
+     * está corriendo. Si falla, se sigue sin watchdog en vez de no medir.
+     */
+    const esp_err_t wdt_result = esp_task_wdt_add(nullptr);
+    if (wdt_result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "No se pudo suscribir al watchdog: %s",
+                 esp_err_to_name(wdt_result));
+    }
+
     std::uint32_t sequence = 0;
     TickType_t last_wake_time = xTaskGetTickCount();
 
     while (true) {
+        esp_task_wdt_reset();
+
         Dht11Reading reading{};
         const esp_err_t read_result = dht11_sensor_.read(reading);
 

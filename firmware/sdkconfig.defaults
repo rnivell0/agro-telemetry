@@ -4,3 +4,10 @@ CONFIG_MQTT_PROTOCOL_5=y
 
 # TaskMonitor usa uxTaskGetSystemState(), que solo existe con esta opcion.
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# SensorTask y TelemetryTask se suscriben al task watchdog. Si una no lo
+# alimenta en 5 s, la placa imprime el backtrace y se reinicia en vez de
+# solo avisar por log. Los static_assert de las dos tareas dependen de este
+# timeout: se fija explicito aunque coincida con el default de ESP-IDF.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
