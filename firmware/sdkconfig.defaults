@@ -11,3 +11,10 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 # timeout: se fija explicito aunque coincida con el default de ESP-IDF.
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+
+# La placa tiene 4 MB de flash (esptool lo detecta al arrancar). Con 2 MB
+# a la aplicación le quedaba ~10 % libre. Dos particiones OTA de 1700 KB:
+# más lugar que la única de 1 MB, y la puerta abierta para actualizar los
+# nodos por Wi-Fi más adelante. Sin código OTA, arranca siempre de ota_0.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_TWO_OTA_LARGE=y
