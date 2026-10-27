@@ -11,6 +11,10 @@ firmware/sdkconfig
 # Gateway (only relevant if it's ever built outside Docker)
 gateway/build/
 
+# Local assistant notes, intentionally not part of the repo
+CLAUDE.md
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
+*.code-workspace
