@@ -8,6 +8,7 @@
 #include "mqtt_client.hpp"
 #include "oled_display.hpp"
 #include "sensor_task.hpp"
+#include "task_monitor.hpp"
 #include "telemetry_data.hpp"
 #include "telemetry_task.hpp"
 #include "wifi_manager.hpp"
@@ -81,6 +82,12 @@ extern "C" void app_main()
     if (sensor_result != ESP_OK) {
         ESP_LOGE(TAG, "No se pudo crear SensorTask");
         return;
+    }
+
+    // Diagnóstico: igual que la OLED, si no arranca el resto sigue.
+    static TaskMonitor task_monitor;
+    if (task_monitor.start() != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo crear TaskMonitor; se continua sin reporte");
     }
 
     ESP_LOGI(TAG, "Cola y tareas creadas correctamente");

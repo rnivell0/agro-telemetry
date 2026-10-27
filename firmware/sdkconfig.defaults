@@ -1,3 +1,6 @@
 # Workaround para espressif/mqtt 1.0.0: mqtt5_client.c se incluye siempre.
 # La aplicacion continúa utilizando MQTT 3.1.1.
 CONFIG_MQTT_PROTOCOL_5=y
+
+# TaskMonitor usa uxTaskGetSystemState(), que solo existe con esta opcion.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
