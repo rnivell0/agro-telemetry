@@ -91,6 +91,7 @@ private:
     esp_event_handler_instance_t wifi_disconnected_event_instance_{nullptr};
     bool transport_started_{false};
 
-    // Lo escribe solo la tarea MQTT; las demás lo leen (OLED, publicar).
+    // Lo escribe solo la tarea MQTT, y solo según los eventos del broker;
+    // las demás lo leen (OLED, publicar).
     std::atomic<bool> connected_{false};
 };

@@ -239,8 +239,15 @@ void MqttClient::handle_message(const Message &message)
         break;
 
     case MessageType::NetworkDown:
-        connected_.store(false);
-        ESP_LOGW(TAG, "Wi-Fi no disponible; MQTT queda a la espera");
+        /*
+         * No se toca connected_: la sesión MQTT puede sobrevivir a un corte
+         * breve de Wi-Fi, y en ese caso ESP-MQTT no emite ningún evento al
+         * volver. Si acá se marcara "sin conexión", nada la volvería a
+         * marcar como conectada. Si la sesión sí se cae, ESP-MQTT lo avisa
+         * con MQTT_EVENT_DISCONNECTED (a más tardar al vencer el
+         * keepalive). Mientras tanto las mediciones esperan en su outbox.
+         */
+        ESP_LOGW(TAG, "Wi-Fi no disponible; la sesion MQTT decide si sigue viva");
         break;
 
     case MessageType::BrokerConnected:
