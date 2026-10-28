@@ -14,6 +14,10 @@ firmware/build-aws/
 firmware/sdkconfig.aws
 firmware/sdkconfig.aws.old
 
+# Private keys never belong in the repo, wherever they end up. AWS device
+# keys live outside it and reach each board through tools/aws_identity.py.
+*.key
+
 # Gateway (only relevant if it's ever built outside Docker)
 gateway/build/
 

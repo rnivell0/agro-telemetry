@@ -65,7 +65,7 @@ A node can publish to AWS IoT Core instead of the local broker: a Kconfig choice
 - **Mutual TLS with a certificate per device.** Each node is an IoT *thing* named after its device ID, with its own X.509 certificate. The node verifies AWS with Amazon Root CA 1; AWS identifies the node by its certificate.
 - **The policy mirrors the Mosquitto ACL, but is stronger.** It allows `iot:Connect` only as `client/${iot:Connection.Thing.ThingName}` and `iot:Publish` only to `agro/devices/${iot:Connection.Thing.ThingName}/telemetry`. That variable only resolves when the client ID is a thing that owns the presenting certificate, so a node cannot connect as another one, which the shared Mosquitto password allows.
 - **Tested** from a PC with `mosquitto_pub` before touching the firmware: publishing to another node's topic is rejected (PUBACK 135) and connecting with another node's client ID is refused (CONNACK 135). Then on the board: the living-room node publishes to AWS, with 170 KB of heap free and no change in the MQTT task's stack.
-- **Build:** the AWS variant has its own sdkconfig and build folder, so the other nodes' build is untouched: `idf.py -B build-aws -D SDKCONFIG=sdkconfig.aws flash monitor`. The device certificate and key are embedded from `firmware/main/certs/aws/`, which is git-ignored, so that binary belongs to one board.
+- **Build:** the AWS variant has its own sdkconfig and build folder, so the other nodes' build is untouched: `idf.py -B build-aws -D SDKCONFIG=sdkconfig.aws flash monitor`. The AWS image is the same for every board: each board's certificate and key live in its own `certs` flash partition, written once with `python tools/aws_identity.py <folder with device.crt and device.key> --port <PORT>`. That partition is separate from `nvs` because the Wi-Fi code erases `nvs` when it finds an old version, and a board's identity must not go with it. Without it, the node logs what is missing and does not publish.
 
 The local stack stays the main system; AWS is a learning experiment on a free-plan account, not something left running.
 
@@ -157,12 +157,12 @@ ctest --test-dir build --output-on-failure
 - One node has gone silent twice, for 2.5 h and 10 min, without rebooting and without reaching the broker, and came back only after a power cycle; the reset button did not help. The other two nodes, on the same firmware, had no gaps. Not yet diagnosed: the power supply and the Wi-Fi signal where it is placed are the main suspects.
 - All nodes share one MQTT user and password. The ACL keeps each client ID on its own topic, but anyone holding the shared password can connect with another node's client ID and publish as that node. Per-node client certificates (mutual TLS) would close this.
 - On the local broker, TLS is server-side only: the broker is verified, clients authenticate with passwords. Only the AWS variant uses client certificates.
-- The AWS variant embeds the device's private key in the firmware image, so each board needs its own build, and without flash encryption the key can be read from the flash by anyone with the board in hand.
+- Without flash encryption, a board's AWS private key can be read from its `certs` partition by anyone with the board in hand. If that happens, the certificate is revoked in AWS and only that board is affected.
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
 - InfluxDB keeps 30 days of data.
 
 ## What's next
 
 Planned, not built:
-- On AWS: keep each board's certificate in its own flash partition, so one firmware image serves every board; then a rule into DynamoDB or S3, a Device Shadow, and over-the-air updates with IoT Jobs.
+- On AWS: a rule into DynamoDB or S3, a Device Shadow, and over-the-air updates with IoT Jobs.
 - A second I2C sensor on the bus the OLED already uses.
