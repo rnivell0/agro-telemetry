@@ -8,7 +8,9 @@
 #include <iterator>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_task_wdt.h"
 #include "esp_wifi.h"
 #include "nvs.h"
@@ -109,6 +111,34 @@ std::uint32_t parse_telemetry_interval(const char *data,
 #else
 extern const char mqtt_ca_pem_start[] asm("_binary_mqtt_ca_pem_start");
 #endif
+
+/*
+ * Una imagen recién llegada por OTA arranca en PENDING_VERIFY. Llegar al
+ * broker prueba que funcionan Wi-Fi, TLS e identidad, que es lo necesario
+ * para recibir otra OTA que la corrija: con eso se confirma. Si se reinicia
+ * antes, el bootloader vuelve a la imagen anterior. Una imagen grabada por
+ * USB no está a prueba y esto no hace nada.
+ */
+void confirm_running_image()
+{
+    esp_ota_img_states_t state{};
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(),
+                                    &state) != ESP_OK ||
+        state != ESP_OTA_IMG_PENDING_VERIFY) {
+        return;
+    }
+
+    const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "No se pudo confirmar el firmware nuevo: %s",
+                 esp_err_to_name(result));
+        return;
+    }
+    ESP_LOGI(TAG,
+             "Firmware %s confirmado: se cancela el rollback",
+             esp_app_get_description()->version);
+}
 }
 
 MqttClient::MqttClient(const WifiManager &wifi_manager,
@@ -386,13 +416,17 @@ void MqttClient::report_shadow()
     char topic[SHADOW_TOPIC_SIZE]{};
     std::snprintf(topic, sizeof(topic), "%supdate", shadow_prefix_.data());
 
-    char payload[64]{};
-    const int payload_length =
-        std::snprintf(payload,
-                      sizeof(payload),
-                      "{\"state\":{\"reported\":{\"%s\":%" PRIu32 "}}}",
-                      SHADOW_INTERVAL_KEY,
-                      telemetry_interval_s_);
+    // La versión sale de git describe al compilar (hasta 31 caracteres):
+    // así se ve desde la nube qué firmware corre cada placa.
+    char payload[128]{};
+    const int payload_length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"state\":{\"reported\":{\"%s\":%" PRIu32
+        ",\"firmware_version\":\"%s\"}}}",
+        SHADOW_INTERVAL_KEY,
+        telemetry_interval_s_,
+        esp_app_get_description()->version);
 
     if (esp_mqtt_client_enqueue(client_,
                                 topic,
@@ -405,9 +439,10 @@ void MqttClient::report_shadow()
         return;
     }
     ESP_LOGI(TAG,
-             "Shadow reportado | %s: %" PRIu32 " s",
+             "Shadow reportado | %s: %" PRIu32 " s | firmware: %s",
              SHADOW_INTERVAL_KEY,
-             telemetry_interval_s_);
+             telemetry_interval_s_,
+             esp_app_get_description()->version);
 }
 
 void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
@@ -543,6 +578,7 @@ void MqttClient::handle_message(const Message &message)
     case MessageType::BrokerConnected:
         connected_.store(true);
         ESP_LOGI(TAG, "Conectado al broker MQTT");
+        confirm_running_image();
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
         // Sesión limpia: AWS no guarda las suscripciones de la conexión
         // anterior, y el desired pudo cambiar mientras el nodo no estaba.

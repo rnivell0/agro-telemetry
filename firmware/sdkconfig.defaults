@@ -21,3 +21,9 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Rollback: una imagen recibida por OTA arranca "a prueba" y MqttClient la
+# confirma recién al conectarse al broker. Si antes se reinicia (corte,
+# watchdog, panic), el bootloader vuelve a la anterior. Es una opción del
+# bootloader, que no se actualiza por OTA: se graba una vez por USB.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
