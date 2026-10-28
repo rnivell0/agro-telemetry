@@ -8,6 +8,10 @@
 #include "device_id.hpp"
 #include "mqtt_client.hpp"
 #include "oled_display.hpp"
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+#include "ota_job.hpp"
+#include "ota_updater.hpp"
+#endif
 #include "sensor_task.hpp"
 #include "task_monitor.hpp"
 #include "telemetry_data.hpp"
@@ -63,6 +67,24 @@ extern "C" void app_main()
     }
 
     static MqttClient mqtt_client{wifi_manager, device_id};
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // Un Job a la vez: si llega otro durante una descarga, se ignora y AWS
+    // lo vuelve a ofrecer cuando el actual termina.
+    static QueueHandle_t ota_job_queue = xQueueCreate(1, sizeof(OtaJob));
+    if (ota_job_queue == nullptr) {
+        ESP_LOGE(TAG, "No se pudo crear la cola de OTA");
+        return;
+    }
+    mqtt_client.set_ota_job_queue(ota_job_queue);
+
+    // Sin OTA el nodo sigue midiendo y publicando: no es motivo para parar.
+    static OtaUpdater ota_updater{ota_job_queue, mqtt_client};
+    if (ota_updater.start() != ESP_OK) {
+        ESP_LOGW(TAG, "No se pudo crear OtaUpdater; se continua sin OTA");
+    }
+#endif
+
     const esp_err_t mqtt_result = mqtt_client.start();
     if (mqtt_result != ESP_OK) {
         ESP_LOGE(TAG,
