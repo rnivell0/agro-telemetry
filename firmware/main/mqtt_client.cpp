@@ -4,7 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <iterator>
 
+#include "cJSON.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "esp_wifi.h"
@@ -41,6 +44,68 @@ constexpr char BROKER_URI[] = "mqtts://" CONFIG_AGRO_AWS_IOT_ENDPOINT ":8883";
 // Dónde graba tools/aws_identity.py la identidad de cada placa.
 constexpr char IDENTITY_PARTITION[] = "certs";
 constexpr char IDENTITY_NAMESPACE[] = "aws_iot";
+
+/*
+ * Device Shadow: desired es lo que pide la nube, reported lo que hace el
+ * nodo. El nodo pide el documento al conectarse (get) y AWS le avisa cada
+ * cambio de desired (update/delta).
+ */
+constexpr const char *SHADOW_SUBSCRIPTIONS[] = {
+    "get/accepted", "get/rejected", "update/delta", "update/rejected"};
+constexpr std::size_t SHADOW_TOPIC_SIZE = 64;
+constexpr char SHADOW_INTERVAL_KEY[] = "telemetry_interval_s";
+// El mínimo es el período del sensor: más seguido no hay mediciones nuevas.
+constexpr std::uint32_t MIN_TELEMETRY_INTERVAL_S = 2;
+constexpr std::uint32_t MAX_TELEMETRY_INTERVAL_S = 3600;
+// Las mediciones llegan cada 2 s con unos ms de variación. Sin margen, con
+// un intervalo de 4 s una que llega 1 ms antes se saltearía y el envío
+// quedaría a 6 s.
+constexpr std::uint64_t SEND_TOLERANCE_MS = 500;
+
+/*
+ * get/accepted trae el documento entero (state.desired, state.reported);
+ * update/delta trae solo lo que difiere, directo en state. Devuelve 0 si
+ * no pide un intervalo o si el pedido no es válido.
+ */
+std::uint32_t parse_telemetry_interval(const char *data,
+                                       int length,
+                                       bool in_desired)
+{
+    cJSON *document = cJSON_ParseWithLength(data, length);
+    if (document == nullptr) {
+        ESP_LOGW(TAG, "El documento del shadow no es JSON; se ignora");
+        return 0;
+    }
+
+    const cJSON *state = cJSON_GetObjectItemCaseSensitive(document, "state");
+    if (in_desired) {
+        state = cJSON_GetObjectItemCaseSensitive(state, "desired");
+    }
+    const cJSON *field =
+        cJSON_GetObjectItemCaseSensitive(state, SHADOW_INTERVAL_KEY);
+
+    std::uint32_t interval_s = 0;
+    if (field != nullptr) {
+        // El rango va primero: convertir a entero un double fuera de rango
+        // es comportamiento indefinido.
+        const double value = cJSON_IsNumber(field) ? field->valuedouble : -1.0;
+        if (value >= MIN_TELEMETRY_INTERVAL_S &&
+            value <= MAX_TELEMETRY_INTERVAL_S &&
+            value == static_cast<double>(static_cast<std::uint32_t>(value))) {
+            interval_s = static_cast<std::uint32_t>(value);
+        } else {
+            ESP_LOGW(TAG,
+                     "%s pedido invalido (entero de %" PRIu32 " a %" PRIu32
+                     " s); se mantiene el actual",
+                     SHADOW_INTERVAL_KEY,
+                     MIN_TELEMETRY_INTERVAL_S,
+                     MAX_TELEMETRY_INTERVAL_S);
+        }
+    }
+
+    cJSON_Delete(document);
+    return interval_s;
+}
 #else
 extern const char mqtt_ca_pem_start[] asm("_binary_mqtt_ca_pem_start");
 #endif
@@ -54,6 +119,13 @@ MqttClient::MqttClient(const WifiManager &wifi_manager,
                   telemetry_topic_.size(),
                   "agro/devices/%s/telemetry",
                   device_id_.data());
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // El thing se llama igual que el device ID.
+    std::snprintf(shadow_prefix_.data(),
+                  shadow_prefix_.size(),
+                  "$aws/things/%s/shadow/",
+                  device_id_.data());
+#endif
 }
 
 MqttClient::~MqttClient()
@@ -256,6 +328,143 @@ esp_err_t MqttClient::load_device_identity()
     ESP_LOGI(TAG, "Identidad AWS leida de la particion %s", IDENTITY_PARTITION);
     return ESP_OK;
 }
+
+void MqttClient::subscribe_shadow()
+{
+    constexpr std::size_t count = std::size(SHADOW_SUBSCRIPTIONS);
+    char filters[count][SHADOW_TOPIC_SIZE]{};
+    esp_mqtt_topic_t topics[count]{};
+    for (std::size_t i = 0; i < count; ++i) {
+        std::snprintf(filters[i],
+                      SHADOW_TOPIC_SIZE,
+                      "%s%s",
+                      shadow_prefix_.data(),
+                      SHADOW_SUBSCRIPTIONS[i]);
+        topics[i] = {filters[i], MQTT_QOS};
+    }
+
+    /*
+     * Un solo SUBSCRIBE para los cuatro: un único SUBACK avisa que están
+     * todos, y recién ahí se pide el documento. Si se pidiera antes, la
+     * respuesta podría llegar a un topic al que todavía no se está suscrito.
+     */
+    if (esp_mqtt_client_subscribe_multiple(
+            client_, topics, static_cast<int>(count)) < 0) {
+        ESP_LOGE(TAG, "No se pudo suscribir al Device Shadow");
+    }
+}
+
+void MqttClient::request_shadow()
+{
+    char topic[SHADOW_TOPIC_SIZE]{};
+    std::snprintf(topic, sizeof(topic), "%sget", shadow_prefix_.data());
+    if (esp_mqtt_client_enqueue(client_, topic, "", 0, MQTT_QOS, false, true) <
+        0) {
+        ESP_LOGE(TAG, "No se pudo pedir el Device Shadow");
+    }
+}
+
+void MqttClient::apply_telemetry_interval(std::uint32_t requested_interval_s)
+{
+    if (requested_interval_s != 0 &&
+        requested_interval_s != telemetry_interval_s_) {
+        ESP_LOGI(TAG,
+                 "Intervalo de envio a AWS: %" PRIu32 " s -> %" PRIu32 " s",
+                 telemetry_interval_s_,
+                 requested_interval_s);
+        telemetry_interval_s_ = requested_interval_s;
+    }
+
+    // Siempre se reporta, aunque no cambie nada: así reported refleja lo
+    // que el nodo hace de verdad, también la primera vez y después de un
+    // pedido inválido.
+    report_shadow();
+}
+
+void MqttClient::report_shadow()
+{
+    char topic[SHADOW_TOPIC_SIZE]{};
+    std::snprintf(topic, sizeof(topic), "%supdate", shadow_prefix_.data());
+
+    char payload[64]{};
+    const int payload_length =
+        std::snprintf(payload,
+                      sizeof(payload),
+                      "{\"state\":{\"reported\":{\"%s\":%" PRIu32 "}}}",
+                      SHADOW_INTERVAL_KEY,
+                      telemetry_interval_s_);
+
+    if (esp_mqtt_client_enqueue(client_,
+                                topic,
+                                payload,
+                                payload_length,
+                                MQTT_QOS,
+                                false,
+                                true) < 0) {
+        ESP_LOGE(TAG, "No se pudo reportar el estado al Device Shadow");
+        return;
+    }
+    ESP_LOGI(TAG,
+             "Shadow reportado | %s: %" PRIu32 " s",
+             SHADOW_INTERVAL_KEY,
+             telemetry_interval_s_);
+}
+
+void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
+{
+    // Un documento grande llega en varios eventos; los del shadow de este
+    // nodo son chicos, así que uno partido se descarta entero.
+    if (event.current_data_offset != 0) {
+        return;
+    }
+    if (event.data_len != event.total_data_len) {
+        ESP_LOGW(TAG,
+                 "Documento del shadow de %d bytes partido en varios eventos;"
+                 " se ignora",
+                 event.total_data_len);
+        return;
+    }
+
+    if (is_shadow_topic(event, "update/delta")) {
+        // Un pedido inválido no se aplica ni se reporta: desired y reported
+        // siguen distintos y el delta queda visible en la consola.
+        const std::uint32_t interval_s =
+            parse_telemetry_interval(event.data, event.data_len, false);
+        if (interval_s != 0) {
+            post_event(MessageType::ShadowState, interval_s);
+        }
+    } else if (is_shadow_topic(event, "get/accepted")) {
+        post_event(MessageType::ShadowState,
+                   parse_telemetry_interval(event.data, event.data_len, true));
+    } else if (is_shadow_topic(event, "get/rejected")) {
+        // La primera vez es un 404: el shadow todavía no existe, y lo crea
+        // el primer reporte.
+        ESP_LOGI(TAG,
+                 "No hay Device Shadow que leer: %.*s",
+                 event.data_len,
+                 event.data);
+        post_event(MessageType::ShadowState);
+    } else if (is_shadow_topic(event, "update/rejected")) {
+        ESP_LOGE(TAG,
+                 "AWS rechazo el reporte del shadow: %.*s",
+                 event.data_len,
+                 event.data);
+    }
+}
+
+bool MqttClient::is_shadow_topic(const esp_mqtt_event_t &event,
+                                 const char *suffix) const
+{
+    // El topic del evento no termina en '\0': se compara por longitud.
+    const std::size_t prefix_length = std::strlen(shadow_prefix_.data());
+    const std::size_t suffix_length = std::strlen(suffix);
+    return static_cast<std::size_t>(event.topic_len) ==
+               prefix_length + suffix_length &&
+           std::memcmp(event.topic, shadow_prefix_.data(), prefix_length) ==
+               0 &&
+           std::memcmp(event.topic + prefix_length, suffix, suffix_length) ==
+               0;
+}
 #endif
 
 esp_err_t MqttClient::publish_telemetry(const TelemetryData &measurement)
@@ -266,7 +475,7 @@ esp_err_t MqttClient::publish_telemetry(const TelemetryData &measurement)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const Message message{MessageType::Publish, measurement};
+    const Message message{MessageType::Publish, measurement, 0};
     if (xQueueSend(queue_, &message, 0) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
@@ -334,6 +543,11 @@ void MqttClient::handle_message(const Message &message)
     case MessageType::BrokerConnected:
         connected_.store(true);
         ESP_LOGI(TAG, "Conectado al broker MQTT");
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+        // Sesión limpia: AWS no guarda las suscripciones de la conexión
+        // anterior, y el desired pudo cambiar mientras el nodo no estaba.
+        subscribe_shadow();
+#endif
         break;
 
     case MessageType::BrokerDisconnected:
@@ -343,6 +557,16 @@ void MqttClient::handle_message(const Message &message)
     case MessageType::Publish:
         send_telemetry(message.measurement);
         break;
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    case MessageType::ShadowSubscribed:
+        request_shadow();
+        break;
+
+    case MessageType::ShadowState:
+        apply_telemetry_interval(message.telemetry_interval_s);
+        break;
+#endif
     }
 }
 
@@ -366,6 +590,16 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
                  measurement.sequence);
         return;
     }
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // Sin log: con un intervalo de 60 s serían 29 líneas por cada envío.
+    const std::uint64_t interval_ms = telemetry_interval_s_ * 1000ULL;
+    if (last_sent_ms_ != 0 &&
+        measurement.elapsed_time_ms - last_sent_ms_ + SEND_TOLERANCE_MS <
+            interval_ms) {
+        return;
+    }
+#endif
 
     /*
      * La señal no es parte de la medición del sensor: es el estado de la
@@ -422,6 +656,9 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
                  measurement.sequence);
         return;
     }
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    last_sent_ms_ = measurement.elapsed_time_ms;
+#endif
 
     ESP_LOGI(TAG,
              "Telemetria encolada | Secuencia: %" PRIu32
@@ -430,9 +667,10 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
              message_id);
 }
 
-void MqttClient::post_event(MessageType type)
+void MqttClient::post_event(MessageType type,
+                            std::uint32_t telemetry_interval_s)
 {
-    const Message message{type, {}};
+    const Message message{type, {}, telemetry_interval_s};
     if (xQueueSend(queue_, &message, 0) != pdPASS) {
         ESP_LOGE(TAG,
                  "Cola MQTT llena: se perdio el evento %d",
@@ -473,6 +711,26 @@ void MqttClient::mqtt_event_handler(void *context,
                  "Publicacion QoS 1 confirmada | Message ID: %d",
                  event->msg_id);
         break;
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // La única suscripción es la del shadow, así que no hace falta mirar
+    // el msg_id.
+    case MQTT_EVENT_SUBSCRIBED:
+        if (event->error_handle != nullptr &&
+            event->error_handle->error_type ==
+                MQTT_ERROR_TYPE_SUBSCRIBE_FAILED) {
+            ESP_LOGE(TAG,
+                     "AWS rechazo la suscripcion al Device Shadow: revisar "
+                     "la politica del thing");
+        } else {
+            mqtt_client->post_event(MessageType::ShadowSubscribed);
+        }
+        break;
+
+    case MQTT_EVENT_DATA:
+        mqtt_client->handle_shadow_data(*event);
+        break;
+#endif
 
     default:
         break;

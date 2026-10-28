@@ -15,7 +15,7 @@ idf_component_register(SRCS "oled_display.cpp" "dht22_sensor.cpp" "main.cpp"
                             "wifi_manager.cpp"
                        INCLUDE_DIRS ""
                        EMBED_TXTFILES ${embedded_certs}
-                       PRIV_REQUIRES esp_driver_gpio esp_driver_i2c esp_event esp_netif esp_rom esp_timer esp_wifi mqtt nvs_flash)
+                       PRIV_REQUIRES esp_driver_gpio esp_driver_i2c esp_event esp_netif esp_rom esp_timer esp_wifi mqtt cjson nvs_flash)
 
 # Estándar fijado acá y no heredado del default de ESP-IDF (gnu++26 en la
 # 6.0), para que el código compile igual con cualquier versión instalada.
