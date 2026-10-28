@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <exception>
+#include <string_view>
 
 #include <nlohmann/json.hpp>
 
@@ -18,6 +19,31 @@ std::string invalidType(const char *field)
 {
     return std::string{"invalid type for field "} + field;
 }
+}
+
+std::optional<std::string> deviceIdFromTopic(const std::string &topic)
+{
+    constexpr std::string_view prefix{"agro/devices/"};
+    constexpr std::string_view suffix{"/telemetry"};
+
+    const std::string_view view{topic};
+    if (view.size() <= prefix.size() + suffix.size() ||
+        view.substr(0, prefix.size()) != prefix ||
+        view.substr(view.size() - suffix.size()) != suffix)
+    {
+        return std::nullopt;
+    }
+
+    const std::string_view deviceId = view.substr(
+        prefix.size(), view.size() - prefix.size() - suffix.size());
+
+    // Un solo nivel: con '/' el topic tendría niveles de más.
+    if (deviceId.find_first_of("/+#\r\n") != std::string_view::npos)
+    {
+        return std::nullopt;
+    }
+
+    return std::string{deviceId};
 }
 
 TelemetryParseResult TelemetryParser::parse(
