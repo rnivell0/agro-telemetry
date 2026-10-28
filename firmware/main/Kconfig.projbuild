@@ -12,8 +12,27 @@ menu "Agro Telemetry"
         help
             Contraseña de la red Wi-Fi. WifiManager nunca la registra.
 
+    choice AGRO_MQTT_BACKEND
+        prompt "MQTT broker"
+        default AGRO_MQTT_BACKEND_LOCAL
+        help
+            A qué broker se conecta el nodo. El topic y el JSON son los
+            mismos en los dos casos; cambia cómo se autentica el nodo.
+
+        config AGRO_MQTT_BACKEND_LOCAL
+            bool "Mosquitto local (usuario y contraseña)"
+
+        config AGRO_MQTT_BACKEND_AWS_IOT
+            bool "AWS IoT Core (certificado X.509 por dispositivo)"
+            help
+                TLS mutuo: el nodo se identifica con su propio certificado.
+                Necesita main/certs/aws/device.crt y device.key, que no se
+                versionan porque son propios de cada placa.
+    endchoice
+
     config AGRO_MQTT_BROKER_URI
         string "MQTT broker URI"
+        depends on AGRO_MQTT_BACKEND_LOCAL
         default "mqtts://192.168.1.28:8883"
         help
             Direccion LAN del broker Mosquitto, sobre TLS (puerto 8883).
@@ -21,6 +40,7 @@ menu "Agro Telemetry"
 
     config AGRO_MQTT_USERNAME
         string "MQTT username"
+        depends on AGRO_MQTT_BACKEND_LOCAL
         default "agro-node"
         help
             Usuario de flota dado de alta en el archivo de contraseñas de
@@ -30,8 +50,17 @@ menu "Agro Telemetry"
 
     config AGRO_MQTT_PASSWORD
         string "MQTT password"
+        depends on AGRO_MQTT_BACKEND_LOCAL
         default "CHANGE_ME"
         help
             Contraseña del usuario MQTT. MqttClient nunca la registra por log.
+
+    config AGRO_AWS_IOT_ENDPOINT
+        string "AWS IoT Core endpoint"
+        depends on AGRO_MQTT_BACKEND_AWS_IOT
+        default "CHANGE_ME-ats.iot.us-east-2.amazonaws.com"
+        help
+            Endpoint de datos de la cuenta, sin esquema ni puerto:
+            aws iot describe-endpoint --endpoint-type iot:Data-ATS
 
 endmenu

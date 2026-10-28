@@ -26,13 +26,21 @@ static_assert(QUEUE_WAIT_MS < CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000U / 2,
               "del task watchdog");
 
 /*
- * Certificado de la CA local incrustado en el binario mediante
- * EMBED_TXTFILES (ver main/CMakeLists.txt). ESP-MQTT lo usa para validar
- * el certificado que presenta el broker durante el handshake TLS.
+ * Certificados incrustados en el binario mediante EMBED_TXTFILES (ver
+ * main/CMakeLists.txt), que les agrega el '\0' final que espera ESP-MQTT.
+ * La CA valida el certificado que presenta el broker en el handshake TLS.
  */
-extern const std::uint8_t mqtt_ca_pem_start[] asm(
-    "_binary_mqtt_ca_pem_start");
-extern const std::uint8_t mqtt_ca_pem_end[] asm("_binary_mqtt_ca_pem_end");
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+extern const char aws_root_ca_pem_start[] asm("_binary_aws_root_ca_pem_start");
+// AWS IoT Core exige TLS mutuo: el nodo también presenta su certificado,
+// y la política del thing decide qué puede hacer.
+extern const char device_crt_start[] asm("_binary_device_crt_start");
+extern const char device_key_start[] asm("_binary_device_key_start");
+
+constexpr char BROKER_URI[] = "mqtts://" CONFIG_AGRO_AWS_IOT_ENDPOINT ":8883";
+#else
+extern const char mqtt_ca_pem_start[] asm("_binary_mqtt_ca_pem_start");
+#endif
 }
 
 MqttClient::MqttClient(const WifiManager &wifi_manager,
@@ -134,14 +142,27 @@ esp_err_t MqttClient::start()
 esp_err_t MqttClient::initialize()
 {
     esp_mqtt_client_config_t configuration{};
-    configuration.broker.address.uri = CONFIG_AGRO_MQTT_BROKER_URI;
-    configuration.broker.verification.certificate =
-        reinterpret_cast<const char *>(mqtt_ca_pem_start);
+    // En los dos brokers el client ID es el que autoriza: la ACL de
+    // Mosquitto y la política de AWS lo comparan con el topic.
     configuration.credentials.client_id = device_id_.data();
+    configuration.network.disable_auto_reconnect = false;
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    configuration.broker.address.uri = BROKER_URI;
+    configuration.broker.verification.certificate = aws_root_ca_pem_start;
+    configuration.credentials.authentication.certificate = device_crt_start;
+    configuration.credentials.authentication.key = device_key_start;
+    const char *const broker = BROKER_URI;
+    const char *const authentication = "certificado X.509";
+#else
+    configuration.broker.address.uri = CONFIG_AGRO_MQTT_BROKER_URI;
+    configuration.broker.verification.certificate = mqtt_ca_pem_start;
     configuration.credentials.username = CONFIG_AGRO_MQTT_USERNAME;
     configuration.credentials.authentication.password =
         CONFIG_AGRO_MQTT_PASSWORD;
-    configuration.network.disable_auto_reconnect = false;
+    const char *const broker = CONFIG_AGRO_MQTT_BROKER_URI;
+    const char *const authentication = "usuario " CONFIG_AGRO_MQTT_USERNAME;
+#endif
 
     client_ = esp_mqtt_client_init(&configuration);
     if (client_ == nullptr) {
@@ -175,11 +196,11 @@ esp_err_t MqttClient::initialize()
     }
 
     ESP_LOGI(TAG,
-             "Cliente preparado | Broker: %s | Client ID: %s | Usuario: %s"
+             "Cliente preparado | Broker: %s | Client ID: %s | Autenticacion: %s"
              " | Topic: %s",
-             CONFIG_AGRO_MQTT_BROKER_URI,
+             broker,
              device_id_.data(),
-             CONFIG_AGRO_MQTT_USERNAME,
+             authentication,
              telemetry_topic_.data());
     return ESP_OK;
 }
