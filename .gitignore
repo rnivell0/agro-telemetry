@@ -8,6 +8,14 @@ firmware/sdkconfig.old
 # using the placeholders already declared in Kconfig.projbuild.
 firmware/sdkconfig
 
+# Separate build for AWS IoT Core. Its sdkconfig holds the same Wi-Fi
+# credentials, and each board's device certificate and private key are
+# its own identity.
+firmware/build-aws/
+firmware/sdkconfig.aws
+firmware/sdkconfig.aws.old
+firmware/main/certs/aws/
+
 # Gateway (only relevant if it's ever built outside Docker)
 gateway/build/
 
