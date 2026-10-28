@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Agro Telemetry: guarda en DynamoDB la telemetría que llega a AWS IoT Core.
+  Una regla de IoT lee cada mensaje de agro/devices/+/telemetry y lo escribe
+  en una tabla que borra sola los datos viejos. Borrar el stack borra todo.
+
+Parameters:
+  RetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 365
+    Description: Días que se guardan las mediciones y los errores de la regla.
+
+Resources:
+  # Una fila por medición: todas las de un nodo, ordenadas por hora de llegada.
+  TelemetryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: agro-telemetry
+      # Bajo demanda: se paga por escritura y no cuesta nada si no llegan datos.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: received_at
+          AttributeType: N
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: received_at
+          KeyType: RANGE
+      # DynamoDB borra cada fila cuando pasa la hora (epoch, en segundos) que
+      # la regla guarda en expires_at. El borrado no consume escrituras.
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  RuleErrorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /agro/iot-rule-errors
+      RetentionInDays: !Ref RetentionDays
+
+  # Lo asume el servicio de IoT al ejecutar la regla, no una persona. Solo
+  # puede escribir filas en esta tabla y errores en este log group.
+  RuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: iot.amazonaws.com
+            Action: sts:AssumeRole
+            # Que solo lo pueda asumir IoT en nombre de esta cuenta y de esta
+            # regla, y no de otra cuenta que intente usarlo (confused deputy).
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/agro_telemetry_to_dynamodb
+      Policies:
+        - PolicyName: write-telemetry
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt TelemetryTable.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt RuleErrorLogGroup.Arn
+
+  TelemetryRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: agro_telemetry_to_dynamodb
+      TopicRulePayload:
+        Description: Escribe cada medición en la tabla agro-telemetry.
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        # Igual que el gateway local: la identidad sale del topic, que es lo
+        # que garantiza la política del thing, y un payload que dice ser
+        # otro nodo se descarta. Los campos se nombran uno por uno para que
+        # la tabla no guarde nada que el nodo no debería mandar.
+        Sql: !Sub >-
+          SELECT topic(3) AS device_id,
+          timestamp() AS received_at,
+          sequence, temperature_c, humidity_pct, uptime_ms, rssi_dbm,
+          floor(timestamp() / 1000) + ${RetentionDays} * 86400 AS expires_at
+          FROM 'agro/devices/+/telemetry'
+          WHERE device_id = topic(3)
+        Actions:
+          - DynamoDBv2:
+              PutItem:
+                TableName: !Ref TelemetryTable
+              RoleArn: !GetAtt RuleRole.Arn
+        ErrorAction:
+          CloudwatchLogs:
+            LogGroupName: !Ref RuleErrorLogGroup
+            RoleArn: !GetAtt RuleRole.Arn
+
+Outputs:
+  TableName:
+    Value: !Ref TelemetryTable
+  RuleName:
+    Value: !Ref TelemetryRule
