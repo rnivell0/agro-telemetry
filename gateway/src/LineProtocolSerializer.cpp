@@ -25,7 +25,14 @@ std::string LineProtocolSerializer::serialize(const PersistableTelemetry &value)
     line += std::to_string(value.telemetry.sequence);
     line += "u,uptime_ms=";
     line += std::to_string(value.telemetry.uptimeMs);
-    line += "u ";
+    line += 'u';
+    if (value.telemetry.rssiDbm)
+    {
+        line += ",rssi_dbm=";
+        line += std::to_string(*value.telemetry.rssiDbm);
+        line += 'i';
+    }
+    line += ' ';
     line += std::to_string(timestampMs);
     return line;
 }

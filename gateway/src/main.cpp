@@ -265,6 +265,10 @@ int main()
                         << " temperature_c=" << data.temperatureC
                         << " humidity_pct=" << data.humidityPct
                         << " uptime_ms=" << data.uptimeMs;
+                if (data.rssiDbm)
+                {
+                    message << " rssi_dbm=" << *data.rssiDbm;
+                }
                 log("INFO", message.str());
 
                 const QueuePushResult pushResult =

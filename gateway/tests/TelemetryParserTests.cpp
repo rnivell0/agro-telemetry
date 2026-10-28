@@ -63,6 +63,32 @@ int main()
         !deviceWithLineFeed,
         "device_id with a line feed must be rejected");
 
+    expect(
+        valid && !valid.data->rssiDbm,
+        "rssi_dbm must be optional for older firmware");
+
+    const auto withRssi = parser.parse(
+        R"({"device_id":"node","sequence":1,"temperature_c":20,"humidity_pct":50,"uptime_ms":100,"rssi_dbm":-67})");
+    expect(
+        withRssi && withRssi.data->rssiDbm == -67,
+        "rssi_dbm parsed when present");
+
+    const auto positiveRssi = parser.parse(
+        R"({"device_id":"node","sequence":1,"temperature_c":20,"humidity_pct":50,"uptime_ms":100,"rssi_dbm":5})");
+    expect(!positiveRssi, "non-negative rssi_dbm must be rejected");
+
+    const auto hugeRssi = parser.parse(
+        R"({"device_id":"node","sequence":1,"temperature_c":20,"humidity_pct":50,"uptime_ms":100,"rssi_dbm":18446744073709551615})");
+    expect(!hugeRssi, "huge rssi_dbm must not wrap around to a valid value");
+
+    const auto tooLowRssi = parser.parse(
+        R"({"device_id":"node","sequence":1,"temperature_c":20,"humidity_pct":50,"uptime_ms":100,"rssi_dbm":-128})");
+    expect(!tooLowRssi, "rssi_dbm below -127 must be rejected");
+
+    const auto fractionalRssi = parser.parse(
+        R"({"device_id":"node","sequence":1,"temperature_c":20,"humidity_pct":50,"uptime_ms":100,"rssi_dbm":-67.5})");
+    expect(!fractionalRssi, "fractional rssi_dbm must be rejected");
+
     const auto topicDevice =
         deviceIdFromTopic("agro/devices/esp32-5df414/telemetry");
     expect(

@@ -293,18 +293,32 @@ void MqttClient::send_telemetry(const TelemetryData &measurement)
         return;
     }
 
+    /*
+     * La señal no es parte de la medición del sensor: es el estado de la
+     * red al momento de enviar, así que se lee acá y no viaja en
+     * TelemetryData. Si no se puede leer, el campo se omite; el gateway lo
+     * trata como opcional.
+     */
+    char rssi_field[24]{};
+    int rssi_dbm = 0;
+    if (esp_wifi_sta_get_rssi(&rssi_dbm) == ESP_OK) {
+        std::snprintf(rssi_field, sizeof(rssi_field), ",\"rssi_dbm\":%d",
+                      rssi_dbm);
+    }
+
     char payload[JSON_BUFFER_SIZE]{};
     const int payload_length = std::snprintf(
         payload,
         sizeof(payload),
         "{\"device_id\":\"%s\",\"sequence\":%" PRIu32
         ",\"temperature_c\":%.1f,\"humidity_pct\":%.1f,"
-        "\"uptime_ms\":%" PRIu64 "}",
+        "\"uptime_ms\":%" PRIu64 "%s}",
         device_id_.data(),
         measurement.sequence,
         static_cast<double>(measurement.temperature_c),
         static_cast<double>(measurement.humidity_percent),
-        measurement.elapsed_time_ms);
+        measurement.elapsed_time_ms,
+        rssi_field);
 
     if (payload_length < 0 ||
         static_cast<std::size_t>(payload_length) >= sizeof(payload)) {

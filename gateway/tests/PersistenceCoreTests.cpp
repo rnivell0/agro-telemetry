@@ -34,7 +34,7 @@ PersistableTelemetry sample(
     std::string deviceId = "esp32-node-01")
 {
     return {
-        {std::move(deviceId), sequence, 23.0, 60.0, sequence * 1000},
+        {std::move(deviceId), sequence, 23.0, 60.0, sequence * 1000, std::nullopt},
         std::chrono::system_clock::time_point{std::chrono::milliseconds{1785362400123}}};
 }
 
@@ -66,6 +66,15 @@ void testSerializer()
             "temperature_c=23.0,humidity_pct=60.0,"
             "sequence=2035u,uptime_ms=2035000u 1785362400123",
         "serializer emits the expected line protocol");
+
+    auto withRssi = sample(2035);
+    withRssi.telemetry.rssiDbm = -67;
+    expect(
+        serializer.serialize(withRssi) ==
+            "device_telemetry,device_id=esp32-node-01 "
+            "temperature_c=23.0,humidity_pct=60.0,"
+            "sequence=2035u,uptime_ms=2035000u,rssi_dbm=-67i 1785362400123",
+        "serializer emits rssi_dbm as a signed integer when present");
 
     expect(
         serializer.serialize(sample(1, R"(node a,b=c\d)")).find(

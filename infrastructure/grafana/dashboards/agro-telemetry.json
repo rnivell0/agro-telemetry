@@ -321,6 +321,52 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "rssi_dbm"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Señal Wi-Fi"
+              },
+              {
+                "id": "unit",
+                "value": "suffix: dBm"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": -80
+                    },
+                    {
+                      "color": "green",
+                      "value": -70
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "sequence"
             },
             "properties": [
@@ -383,7 +429,7 @@
             "uid": "agro-influxdb"
           },
           "refId": "A",
-          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nlatest = from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"device_telemetry\" and contains(value: r.device_id, set: ${device_id:json}))\n  |> filter(fn: (r) => r._field == \"temperature_c\" or r._field == \"humidity_pct\" or r._field == \"sequence\" or r._field == \"uptime_ms\")\n  |> last()\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n\n// Antigüedad del último mensaje de cada nodo, en segundos.\nage = latest\n  |> filter(fn: (r) => r._field == \"sequence\")\n  |> map(fn: (r) => ({r with _field: \"age_s\", _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0}))\n\nunion(tables: [latest, age])\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group()\n  |> pivot(rowKey: [\"device\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"device\", \"temperature_c\", \"humidity_pct\", \"age_s\", \"sequence\", \"uptime_ms\"])"
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nlatest = from(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"device_telemetry\" and contains(value: r.device_id, set: ${device_id:json}))\n  |> filter(fn: (r) => r._field == \"temperature_c\" or r._field == \"humidity_pct\" or r._field == \"sequence\" or r._field == \"uptime_ms\" or r._field == \"rssi_dbm\")\n  |> last()\n  |> map(fn: (r) => ({r with _value: float(v: r._value)}))\n\n// Antigüedad del último mensaje de cada nodo, en segundos.\nage = latest\n  |> filter(fn: (r) => r._field == \"sequence\")\n  |> map(fn: (r) => ({r with _field: \"age_s\", _value: float(v: uint(v: now()) - uint(v: r._time)) / 1000000000.0}))\n\nunion(tables: [latest, age])\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group()\n  |> pivot(rowKey: [\"device\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"device\", \"temperature_c\", \"humidity_pct\", \"age_s\", \"rssi_dbm\", \"sequence\", \"uptime_ms\"])"
         }
       ],
       "title": "Estado por nodo",
@@ -398,13 +444,104 @@
               "temperature_c": 1,
               "humidity_pct": 2,
               "age_s": 3,
-              "sequence": 4,
-              "uptime_ms": 5
+              "rssi_dbm": 4,
+              "sequence": 5,
+              "uptime_ms": 6
             }
           }
         }
       ],
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "agro-influxdb"
+      },
+      "description": "RSSI que ve cada nodo al publicar. Por encima de -70 dBm la señal es buena; por debajo de -80, un corte es probable. Sirve para distinguir un problema de señal de uno de alimentación.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Señal",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "decimals": 0,
+          "unit": "suffix: dBm",
+          "displayName": "${__field.labels.device}",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": -80
+              },
+              {
+                "color": "green",
+                "value": -70
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "agro-influxdb"
+          },
+          "query": "import \"array\"\nimport \"dict\"\nimport \"strings\"\n\n// Alias opcionales, definidos en la variable oculta \"aliases\" del\n// dashboard. El par vacío del final evita una lista vacía, que\n// dict.fromList no acepta.\naliasPairs = array.filter(arr: strings.split(v: \"${aliases}\" + \",=\", t: \",\"), fn: (x) => strings.containsStr(v: x, substr: \"=\"))\naliases = dict.fromList(pairs: array.map(arr: aliasPairs, fn: (x) => {\n    parts = strings.split(v: x, t: \"=\")\n    return {key: strings.trimSpace(v: parts[0]), value: strings.trimSpace(v: parts[1])}\n}))\n\nfrom(bucket: \"telemetry\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) =>\n    r._measurement == \"device_telemetry\" and\n    contains(value: r.device_id, set: ${device_id:json}) and\n    r._field == \"rssi_dbm\"\n  )\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({r with device: dict.get(dict: aliases, key: r.device_id, default: r.device_id)}))\n  |> group(columns: [\"device\"])\n  |> keep(columns: [\"_time\", \"_value\", \"device\"])\n  |> yield(name: \"rssi\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Señal Wi-Fi",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
