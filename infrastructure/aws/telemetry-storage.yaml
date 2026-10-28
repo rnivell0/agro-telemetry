@@ -8,8 +8,9 @@ Parameters:
   RetentionDays:
     Type: Number
     Default: 7
-    MinValue: 1
-    MaxValue: 365
+    # CloudWatch Logs solo acepta estas retenciones; cualquier otro valor
+    # haría fallar la creación del stack.
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
     Description: Días que se guardan las mediciones y los errores de la regla.
 
 Resources:
@@ -70,8 +71,10 @@ Resources:
                 Action: dynamodb:PutItem
                 Resource: !GetAtt TelemetryTable.Arn
               - Effect: Allow
+                # Los tres que pide la acción de CloudWatch Logs de IoT.
                 Action:
                   - logs:CreateLogStream
+                  - logs:DescribeLogStreams
                   - logs:PutLogEvents
                 Resource: !GetAtt RuleErrorLogGroup.Arn
 
