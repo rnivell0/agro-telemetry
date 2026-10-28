@@ -66,6 +66,7 @@ A node can publish to AWS IoT Core instead of the local broker: a Kconfig choice
 - **The policy mirrors the Mosquitto ACL, but is stronger.** It allows `iot:Connect` only as `client/${iot:Connection.Thing.ThingName}` and `iot:Publish` only to `agro/devices/${iot:Connection.Thing.ThingName}/telemetry`. That variable only resolves when the client ID is a thing that owns the presenting certificate, so a node cannot connect as another one, which the shared Mosquitto password allows.
 - **Tested** from a PC with `mosquitto_pub` before touching the firmware: publishing to another node's topic is rejected (PUBACK 135) and connecting with another node's client ID is refused (CONNACK 135). Then on the board: the living-room node publishes to AWS, with 170 KB of heap free and no change in the MQTT task's stack.
 - **Build:** the AWS variant has its own sdkconfig and build folder, so the other nodes' build is untouched: `idf.py -B build-aws -D SDKCONFIG=sdkconfig.aws flash monitor`. The AWS image is the same for every board: each board's certificate and key live in its own `certs` flash partition, written once with `python tools/aws_identity.py <folder with device.crt and device.key> --port <PORT>`. That partition is separate from `nvs` because the Wi-Fi code erases `nvs` when it finds an old version, and a board's identity must not go with it. Without it, the node logs what is missing and does not publish.
+- **Storage in DynamoDB.** `infrastructure/aws/telemetry-storage.yaml` is a CloudFormation stack: an IoT rule writes each message to the `agro-telemetry` table, with `device_id` as partition key and arrival time (ms) as sort key. As in the gateway, the identity comes from the topic (`topic(3)`) and a payload claiming another device is dropped; fields are listed one by one instead of `SELECT *`. Rows expire through TTL after `RetentionDays` (7 by default), rule errors go to CloudWatch Logs, and the rule's IAM role can only `PutItem` on that table and can only be assumed by IoT for this account and this rule. Tested with the living-room node: a row every 2 s, with `expires_at` exactly 7 days after arrival. Deleting the stack removes all of it.
 
 The local stack stays the main system; AWS is a learning experiment on a free-plan account, not something left running.
 
@@ -164,5 +165,5 @@ ctest --test-dir build --output-on-failure
 ## What's next
 
 Planned, not built:
-- On AWS: a rule into DynamoDB or S3, a Device Shadow, and over-the-air updates with IoT Jobs.
+- On AWS: a Device Shadow, and over-the-air updates with IoT Jobs.
 - A second I2C sensor on the bus the OLED already uses.
