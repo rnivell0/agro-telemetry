@@ -55,7 +55,7 @@ Two threads and a bounded queue:
 
 - **Mosquitto** on port 8883, TLS only, no anonymous access. An ACL denies everything not listed: each node may only publish to the topic carrying its own client ID (`pattern write agro/devices/%c/telemetry`), and the gateway may only read telemetry.
 - **InfluxDB 2** with organization `agro-telemetry`, bucket `telemetry`, 720 h retention.
-- **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket. The dashboard discovers nodes from InfluxDB, shows all of them by default with one line per node plus a per-node status table (latest values and time since the last message), and can show a friendly name per node: edit the hidden `aliases` variable in `infrastructure/grafana/dashboards/agro-telemetry.json` (`esp32-1e1574=Desk,esp32-5de31c=Window`), and Grafana reloads it within 10 s.
+- **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket. The dashboard discovers nodes from InfluxDB, shows all of them by default with one line per node plus a per-node status table (latest values, Wi-Fi signal and time since the last message) and a Wi-Fi signal graph, and can show a friendly name per node: edit the hidden `aliases` variable in `infrastructure/grafana/dashboards/agro-telemetry.json` (`esp32-1e1574=Desk,esp32-5de31c=Window`), and Grafana reloads it within 10 s.
 - **Secrets** are individual files mounted as Docker secrets under `/run/secrets/` — never plain environment variables, never baked into an image. Private keys and the Mosquitto password file are git-ignored.
 
 ### C++ standards
@@ -83,10 +83,12 @@ The same value changes name between layers on purpose, following each layer's co
 Example payload on `agro/devices/esp32-1e1574/telemetry`:
 
 ```json
-{"device_id":"esp32-1e1574","sequence":14,"temperature_c":24.5,"humidity_pct":45.7,"uptime_ms":29367}
+{"device_id":"esp32-1e1574","sequence":14,"temperature_c":24.5,"humidity_pct":45.7,"uptime_ms":29367,"rssi_dbm":-61}
 ```
 
-The gateway rejects a message unless `device_id` is non-empty, `temperature_c` is finite and `humidity_pct` is within 0–100. Sequence gaps are logged as warnings, since a lost packet or a reboot explains them.
+`rssi_dbm` is the Wi-Fi signal the node sees when it publishes. It is read by the MQTT task at send time, not by the sensor task, because it describes the network rather than the measurement. It is optional, so nodes on older firmware are still accepted, and Grafana graphs it per node to tell a weak signal apart from a power problem.
+
+The gateway rejects a message unless `device_id` is non-empty, `temperature_c` is finite, `humidity_pct` is within 0–100 and, when present, `rssi_dbm` is an integer from −127 to −1. Sequence gaps are logged as warnings, since a lost packet or a reboot explains them.
 
 ## Hardware
 

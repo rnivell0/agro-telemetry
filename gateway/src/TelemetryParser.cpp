@@ -101,7 +101,33 @@ TelemetryParseResult TelemetryParser::parse(
             document["temperature_c"].get<double>(),
             document["humidity_pct"].get<double>(),
             document["uptime_ms"].get<std::uint64_t>(),
+            std::nullopt,
         };
+
+        if (document.contains("rssi_dbm"))
+        {
+            if (!document["rssi_dbm"].is_number_integer())
+            {
+                return {std::nullopt, invalidType("rssi_dbm")};
+            }
+            /*
+             * El ESP32 reporta el RSSI como int8_t; cero o más no es real.
+             * nlohmann guarda todo entero no negativo como unsigned, y
+             * leer uno enorme como int64_t daría la vuelta a un negativo:
+             * por eso se descarta antes de convertir.
+             */
+            const bool nonNegative = document["rssi_dbm"].is_number_unsigned();
+            const auto rssi =
+                nonNegative ? 0 : document["rssi_dbm"].get<std::int64_t>();
+            if (nonNegative || rssi < -127 || rssi >= 0)
+            {
+                return {
+                    std::nullopt,
+                    "field rssi_dbm must be between -127 and -1",
+                };
+            }
+            telemetry.rssiDbm = static_cast<int>(rssi);
+        }
 
         if (telemetry.deviceId.empty())
         {
