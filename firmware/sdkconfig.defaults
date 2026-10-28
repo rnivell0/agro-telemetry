@@ -16,5 +16,8 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 # a la aplicación le quedaba ~10 % libre. Dos particiones OTA de 1700 KB:
 # más lugar que la única de 1 MB, y la puerta abierta para actualizar los
 # nodos por Wi-Fi más adelante. Sin código OTA, arranca siempre de ota_0.
+# La tabla es propia (partitions.csv): la misma "two OTA large" más la
+# partición certs con la identidad de la placa para AWS IoT Core.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_PARTITION_TABLE_TWO_OTA_LARGE=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

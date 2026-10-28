@@ -1,0 +1,15 @@
+# La tabla "two OTA large" de ESP-IDF con offsets explícitos, para que
+# ninguna partición existente se mueva, más "certs" al final de la flash.
+#
+# certs guarda la identidad de la placa para AWS IoT Core (certificado y
+# clave privada). Va separada de nvs porque WifiManager borra nvs entera
+# si encuentra una versión vieja o sin espacio, y la identidad no puede
+# perderse así. Se graba una vez por placa: tools/aws_identity.py.
+#
+# Name,   Type, SubType, Offset,   Size,   Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  1700K,
+ota_1,    app,  ota_1,   0x1d0000, 1700K,
+certs,    data, nvs,     0x379000, 0x6000,

@@ -1,12 +1,15 @@
 #include "mqtt_client.hpp"
 
 #include <cinttypes>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "esp_wifi.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "wifi_manager.hpp"
@@ -32,12 +35,12 @@ static_assert(QUEUE_WAIT_MS < CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000U / 2,
  */
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
 extern const char aws_root_ca_pem_start[] asm("_binary_aws_root_ca_pem_start");
-// AWS IoT Core exige TLS mutuo: el nodo también presenta su certificado,
-// y la política del thing decide qué puede hacer.
-extern const char device_crt_start[] asm("_binary_device_crt_start");
-extern const char device_key_start[] asm("_binary_device_key_start");
 
 constexpr char BROKER_URI[] = "mqtts://" CONFIG_AGRO_AWS_IOT_ENDPOINT ":8883";
+
+// Dónde graba tools/aws_identity.py la identidad de cada placa.
+constexpr char IDENTITY_PARTITION[] = "certs";
+constexpr char IDENTITY_NAMESPACE[] = "aws_iot";
 #else
 extern const char mqtt_ca_pem_start[] asm("_binary_mqtt_ca_pem_start");
 #endif
@@ -148,10 +151,17 @@ esp_err_t MqttClient::initialize()
     configuration.network.disable_auto_reconnect = false;
 
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // AWS IoT Core exige TLS mutuo: el nodo también presenta su
+    // certificado, y la política del thing decide qué puede hacer.
+    const esp_err_t identity_result = load_device_identity();
+    if (identity_result != ESP_OK) {
+        return identity_result;
+    }
     configuration.broker.address.uri = BROKER_URI;
     configuration.broker.verification.certificate = aws_root_ca_pem_start;
-    configuration.credentials.authentication.certificate = device_crt_start;
-    configuration.credentials.authentication.key = device_key_start;
+    configuration.credentials.authentication.certificate =
+        device_certificate_.data();
+    configuration.credentials.authentication.key = device_key_.data();
     const char *const broker = BROKER_URI;
     const char *const authentication = "certificado X.509";
 #else
@@ -204,6 +214,49 @@ esp_err_t MqttClient::initialize()
              telemetry_topic_.data());
     return ESP_OK;
 }
+
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+esp_err_t MqttClient::load_device_identity()
+{
+    esp_err_t result = nvs_flash_init_partition(IDENTITY_PARTITION);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "No se pudo abrir la particion %s: %s",
+                 IDENTITY_PARTITION,
+                 esp_err_to_name(result));
+        return result;
+    }
+
+    nvs_handle_t handle{};
+    result = nvs_open_from_partition(
+        IDENTITY_PARTITION, IDENTITY_NAMESPACE, NVS_READONLY, &handle);
+    if (result == ESP_OK) {
+        std::size_t length = device_certificate_.size();
+        result = nvs_get_str(
+            handle, "device_crt", device_certificate_.data(), &length);
+        if (result == ESP_OK) {
+            length = device_key_.size();
+            result = nvs_get_str(handle, "device_key", device_key_.data(), &length);
+        }
+        nvs_close(handle);
+    }
+
+    // Ya copiados a los buffers propios: la partición no hace falta abierta.
+    nvs_flash_deinit_partition(IDENTITY_PARTITION);
+
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "Falta la identidad AWS de esta placa en la particion %s (%s)."
+                 " Grabarla con tools/aws_identity.py",
+                 IDENTITY_PARTITION,
+                 esp_err_to_name(result));
+        return result;
+    }
+
+    ESP_LOGI(TAG, "Identidad AWS leida de la particion %s", IDENTITY_PARTITION);
+    return ESP_OK;
+}
+#endif
 
 esp_err_t MqttClient::publish_telemetry(const TelemetryData &measurement)
 {
