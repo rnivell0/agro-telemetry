@@ -1,10 +1,10 @@
 # Agro Telemetry
 
-An end-to-end agricultural telemetry pipeline, built to learn embedded and IoT engineering properly: an ESP32 running FreeRTOS reads a temperature/humidity sensor and publishes over MQTT with TLS, a C++17 gateway validates each reading and stores it in InfluxDB, and Grafana shows it on a provisioned dashboard.
+An end-to-end agricultural telemetry pipeline, built to learn embedded and IoT engineering properly: an ESP32 running FreeRTOS with C++20 firmware reads a temperature/humidity sensor and publishes over MQTT with TLS, a C++17 gateway validates each reading and stores it in InfluxDB, and Grafana shows it on a provisioned dashboard.
 
 ```mermaid
 flowchart LR
-    S[DHT22 sensor] -->|single-wire| E[ESP32<br/>FreeRTOS · C++]
+    S[DHT22 sensor] -->|single-wire| E[ESP32<br/>FreeRTOS · C++20]
     E -->|I2C| O[SSD1306 OLED]
     E -->|MQTT over TLS<br/>QoS 1| M[Mosquitto]
     M -->|MQTT over TLS| G[Gateway<br/>C++17]
