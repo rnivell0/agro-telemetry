@@ -9,12 +9,14 @@ firmware/sdkconfig.old
 firmware/sdkconfig
 
 # Separate build for AWS IoT Core. Its sdkconfig holds the same Wi-Fi
-# credentials, and each board's device certificate and private key are
-# its own identity.
+# credentials.
 firmware/build-aws/
 firmware/sdkconfig.aws
 firmware/sdkconfig.aws.old
-firmware/main/certs/aws/
+
+# Private keys never belong in the repo, wherever they end up. AWS device
+# keys live outside it and reach each board through tools/aws_identity.py.
+*.key
 
 # Gateway (only relevant if it's ever built outside Docker)
 gateway/build/

@@ -1,7 +1,7 @@
-# Cada broker valida con su propia CA. AWS además identifica al nodo por
-# su certificado, que con su clave vive en certs/aws/ fuera de git.
+# Cada broker valida con su propia CA. Con AWS, el certificado y la clave
+# del nodo no van en el binario: se leen de la partición certs de cada placa.
 if(CONFIG_AGRO_MQTT_BACKEND_AWS_IOT)
-    set(embedded_certs "certs/aws_root_ca.pem" "certs/aws/device.crt" "certs/aws/device.key")
+    set(embedded_certs "certs/aws_root_ca.pem")
 else()
     set(embedded_certs "certs/mqtt_ca.pem")
 endif()

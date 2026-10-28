@@ -11,6 +11,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
+#include "sdkconfig.h"
 
 #include "device_id.hpp"
 #include "telemetry_data.hpp"
@@ -77,6 +78,9 @@ private:
 
     void run();
     esp_err_t initialize();
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    esp_err_t load_device_identity();
+#endif
     void handle_message(const Message &message);
     void start_transport();
     void send_telemetry(const TelemetryData &measurement);
@@ -88,6 +92,13 @@ private:
     // el cliente.
     DeviceId device_id_;
     std::array<char, 48> telemetry_topic_{};
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // Leídos de la partición certs. ESP-MQTT guarda los punteros y los
+    // vuelve a usar en cada reconexión, así que viven tanto como el cliente.
+    // Un certificado RSA 2048 en PEM ronda los 1,2 KB y su clave los 1,7 KB.
+    std::array<char, 2048> device_certificate_{};
+    std::array<char, 2048> device_key_{};
+#endif
     TaskHandle_t task_handle_{nullptr};
     QueueHandle_t queue_{nullptr};
 

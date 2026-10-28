@@ -26,8 +26,9 @@ menu "Agro Telemetry"
             bool "AWS IoT Core (certificado X.509 por dispositivo)"
             help
                 TLS mutuo: el nodo se identifica con su propio certificado.
-                Necesita main/certs/aws/device.crt y device.key, que no se
-                versionan porque son propios de cada placa.
+                El certificado y la clave no van en el binario: cada placa
+                los lleva en su partición certs, grabada una vez con
+                tools/aws_identity.py.
     endchoice
 
     config AGRO_MQTT_BROKER_URI
