@@ -1,0 +1,16 @@
+# ACL de Mosquitto. Con acl_file activo, todo lo que no esté permitido acá
+# está prohibido: publicar, suscribirse y leer.
+
+# Nodos: todos comparten un usuario, así que se los separa por client ID.
+# Cada nodo solo puede publicar en el topic que lleva su propio ID
+# (esp32-xxxxxx, derivado del MAC). Una línea pattern vale para todos los
+# usuarios, por eso va antes de cualquier línea user.
+#
+# Límite conocido: con una contraseña compartida, quien la tenga puede
+# conectarse con el client ID de otro nodo y publicar en su nombre. Eso
+# recién se cierra con certificados de cliente (mTLS).
+pattern write agro/devices/%c/telemetry
+
+# Gateway: solo lee la telemetría de todos los nodos.
+user agro-gateway
+topic read agro/devices/+/telemetry

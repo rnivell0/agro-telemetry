@@ -13,6 +13,15 @@ into an image.
 - `grafana-influxdb-token.txt`: read-only token scoped to the `telemetry`
   bucket and used only by Grafana.
 
+## MQTT
+
+- `mqtt-gateway-password.txt`: password of the `agro-gateway` Mosquitto user,
+  mounted into the gateway.
+- `mqtt-node-password.txt`: password of the `agro-node` fleet user shared by
+  every ESP32. No container mounts it: it is the source for adding the user
+  to `mosquitto/config/passwd` and for the password set in the firmware's
+  `menuconfig`.
+
 ## Grafana
 
 - `grafana-admin-password.txt`: password for the local Grafana `admin` user.
