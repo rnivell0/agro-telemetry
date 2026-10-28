@@ -12,7 +12,7 @@ flowchart LR
     I --> F[Grafana]
 ```
 
-Everything to the right of the ESP32 runs on one machine with Docker Compose. The status is honest: this is a bench prototype with two nodes powered over USB, not a field deployment.
+Everything to the right of the ESP32 runs on one machine with Docker Compose. The status is honest: this is a bench prototype with three nodes powered over USB, not a field deployment.
 
 > Code comments, log messages and commit messages are in Spanish; this README is in English.
 
@@ -46,14 +46,14 @@ Health and robustness:
 
 Two threads and a bounded queue:
 
-- The MQTT thread (Paho C++, TLS) subscribes to `agro/devices/+/telemetry` with QoS 1, parses and validates each JSON message and enqueues it. It never touches InfluxDB.
+- The MQTT thread (Paho C++, TLS) subscribes to `agro/devices/+/telemetry` with QoS 1, parses and validates each JSON message and enqueues it. It never touches InfluxDB. The node's identity comes from the topic, which the broker's ACL guarantees, not from the payload: a message whose `device_id` does not match its topic is rejected.
 - A persistence thread drains the queue in batches, serializes them to InfluxDB line protocol and writes them over HTTP, with exponential backoff on 429/5xx/network errors. Permanent errors (400/401/403) are logged and dropped instead of retried forever.
 - The queue holds 1000 readings. When full it drops the **oldest** reading instead of blocking the MQTT thread.
 - Unit tests for the parser, the queue and the serializer run inside the multi-stage Docker build: a failing test means no image.
 
 ### Infrastructure (Docker Compose)
 
-- **Mosquitto** on port 8883, TLS only, no anonymous access.
+- **Mosquitto** on port 8883, TLS only, no anonymous access. An ACL denies everything not listed: each node may only publish to the topic carrying its own client ID (`pattern write agro/devices/%c/telemetry`), and the gateway may only read telemetry.
 - **InfluxDB 2** with organization `agro-telemetry`, bucket `telemetry`, 720 h retention.
 - **Grafana** with the data source and dashboard provisioned from files; it reads with a token scoped read-only to the telemetry bucket. The dashboard discovers nodes from InfluxDB, shows all of them by default with one line per node plus a per-node status table (latest values and time since the last message), and can show a friendly name per node: edit the hidden `aliases` variable in `infrastructure/grafana/dashboards/agro-telemetry.json` (`esp32-1e1574=Desk,esp32-5de31c=Window`), and Grafana reloads it within 10 s.
 - **Secrets** are individual files mounted as Docker secrets under `/run/secrets/` — never plain environment variables, never baked into an image. Private keys and the Mosquitto password file are git-ignored.
@@ -113,7 +113,7 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 
 
 Copy `ca.crt` to `firmware/main/certs/mqtt_ca.pem`.
 
-**2. MQTT users.** Create `infrastructure/mosquitto/config/passwd` with two users, `esp32-node-01` and `agro-gateway`, using `mosquitto_passwd`. Every node logs in as `esp32-node-01` for now: nodes are told apart by their client ID, not by their user. The container's `mosquitto` user must be able to read the file. If it can't, Mosquitto exits and the reason appears only in `infrastructure/mosquitto/log/mosquitto.log`, not in `docker logs`.
+**2. MQTT users.** Create `infrastructure/mosquitto/config/passwd` with two users, `agro-node` and `agro-gateway`, using `mosquitto_passwd`. `agro-node` is the fleet user every node logs in with: nodes are told apart by their client ID, and the ACL in `infrastructure/mosquitto/config/acl` keeps each one on its own topic. The container's `mosquitto` user must be able to read the file. If it can't, Mosquitto exits and the reason appears only in `infrastructure/mosquitto/log/mosquitto.log`, not in `docker logs`.
 
 **3. Secrets.** Create the files listed in [`infrastructure/secrets/README.md`](infrastructure/secrets/README.md), plus `mqtt-gateway-password.txt` with the gateway's MQTT password.
 
@@ -140,11 +140,11 @@ ctest --test-dir build --output-on-failure
 
 ## Known limitations
 
-- Two nodes, on the bench, powered over USB.
-- All nodes share one MQTT user, and the broker does not yet restrict each node to its own topic, so any node could publish as another.
+- Three nodes, on the bench, powered over USB.
+- One node has gone silent twice, for 2.5 h and 10 min, without rebooting and without reaching the broker, and came back only after a power cycle; the reset button did not help. The other two nodes, on the same firmware, had no gaps. Not yet diagnosed: the power supply and the Wi-Fi signal where it is placed are the main suspects.
+- All nodes share one MQTT user and password. The ACL keeps each client ID on its own topic, but anyone holding the shared password can connect with another node's client ID and publish as that node. Per-node client certificates (mutual TLS) would close this.
 - Server-side TLS only: the broker is verified, clients authenticate with passwords, not certificates.
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
-- A brief Wi-Fi drop that leaves the TCP connection alive could leave the firmware believing it is disconnected. This was found by reading the code and has not been observed.
 - InfluxDB keeps 30 days of data.
 
 ## What's next

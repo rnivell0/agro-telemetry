@@ -63,6 +63,31 @@ int main()
         !deviceWithLineFeed,
         "device_id with a line feed must be rejected");
 
+    const auto topicDevice =
+        deviceIdFromTopic("agro/devices/esp32-5df414/telemetry");
+    expect(
+        topicDevice && *topicDevice == "esp32-5df414",
+        "device ID must be read from a valid topic");
+
+    expect(
+        !deviceIdFromTopic("agro/devices//telemetry"),
+        "topic with an empty device must be rejected");
+    expect(
+        !deviceIdFromTopic("agro/devices/a/b/telemetry"),
+        "topic with an extra level must be rejected");
+    expect(
+        !deviceIdFromTopic("agro/devices/telemetry"),
+        "topic without a device level must be rejected");
+    expect(
+        !deviceIdFromTopic("agro/sensors/esp32-5df414/telemetry"),
+        "topic with a different prefix must be rejected");
+    expect(
+        !deviceIdFromTopic("agro/devices/esp32-5df414/status"),
+        "topic with a different suffix must be rejected");
+    expect(
+        !deviceIdFromTopic("agro/devices/esp32\n5df414/telemetry"),
+        "topic device with a line feed must be rejected");
+
     if (failures == 0)
     {
         std::cout << "All telemetry parser tests passed\n";

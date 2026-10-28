@@ -7,7 +7,7 @@ ESP-IDF 6.0.2 project for an ESP32 DevKit V1 (30 pins). It reads a DHT22 every 2
 From this folder, with the ESP-IDF environment active:
 
 ```sh
-idf.py menuconfig          # Agro Telemetry → Wi-Fi SSID/password, broker URI, shared MQTT user/password
+idf.py menuconfig          # Agro Telemetry → Wi-Fi SSID/password, broker URI, fleet MQTT user (agro-node)/password
 idf.py build
 idf.py -p <PORT> flash monitor
 ```

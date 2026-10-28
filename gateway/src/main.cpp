@@ -184,10 +184,21 @@ int main()
 
         MqttClient mqttClient{
             config,
-            [&](const std::string &, const std::string &payload)
+            [&](const std::string &topic, const std::string &payload)
             {
                 const auto receivedAt =
                     std::chrono::system_clock::now();
+
+                // El topic no se loguea: puede traer cualquier carácter.
+                const std::optional<std::string> topicDeviceId =
+                    deviceIdFromTopic(topic);
+                if (!topicDeviceId)
+                {
+                    ++invalidMessages;
+                    log("WARN", "Invalid telemetry: unexpected topic");
+                    return;
+                }
+
                 TelemetryParseResult result = parser.parse(payload);
                 if (!result)
                 {
@@ -197,6 +208,21 @@ int main()
                 }
 
                 TelemetryData data = std::move(*result.data);
+
+                /*
+                 * La ACL garantiza el ID del topic, no el del payload. Si no
+                 * coinciden, el mensaje viene de un nodo mal configurado o
+                 * de alguien que intenta escribir a nombre de otro nodo.
+                 */
+                if (data.deviceId != *topicDeviceId)
+                {
+                    ++invalidMessages;
+                    log("WARN",
+                        "Invalid telemetry: device_id " + data.deviceId +
+                            " does not match topic device " +
+                            *topicDeviceId);
+                    return;
+                }
 
                 {
                     const std::lock_guard<std::mutex> lock{sequenceMutex};
