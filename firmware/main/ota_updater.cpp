@@ -16,9 +16,10 @@
 
 namespace {
 constexpr char TAG[] = "OTA";
-// Medido después con TaskMonitor: el handshake TLS con S3 corre en esta
-// tarea y es lo que más stack pide.
-constexpr std::uint32_t TASK_STACK_SIZE = 8192;
+// El handshake TLS con S3 corre en esta tarea y es lo que más stack pide.
+// Medido con TaskMonitor en dos OTA completas: pico de ~4,4 KB (3764 B
+// libres de 8192). Queda ~1,7 KB de margen, como en las demás tareas.
+constexpr std::uint32_t TASK_STACK_SIZE = 6144;
 // Debajo de MqttClient y TelemetryTask: la descarga no tiene apuro y las
 // mediciones siguen saliendo mientras tanto.
 constexpr UBaseType_t TASK_PRIORITY = 3;

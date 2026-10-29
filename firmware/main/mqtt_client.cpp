@@ -615,8 +615,10 @@ void MqttClient::handle_aws_data(const esp_mqtt_event_t &event)
     } else if (topic == "jobs/notify-next" ||
                topic == "jobs/$next/get/accepted") {
         handle_job_data(event);
-    } else if (topic.starts_with("jobs/")) {
-        // $next/get/rejected o jobs/<id>/update/rejected.
+    } else if (topic.starts_with("jobs/") && topic.ends_with("/rejected")) {
+        // $next/get/rejected o jobs/<id>/update/rejected. Las respuestas
+        // accepted de un update también llegan, sin suscribirse, y no
+        // requieren nada.
         ESP_LOGE(TAG,
                  "AWS rechazo un pedido de Jobs (%.*s): %.*s",
                  static_cast<int>(topic.size()),
