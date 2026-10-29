@@ -2,7 +2,9 @@
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
 #include "esp_err.h"
@@ -14,6 +16,7 @@
 #include "sdkconfig.h"
 
 #include "device_id.hpp"
+#include "ota_job.hpp"
 #include "telemetry_data.hpp"
 
 class WifiManager;
@@ -46,6 +49,15 @@ public:
     esp_err_t publish_telemetry(const TelemetryData &measurement);
     bool is_connected() const;
 
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    // Adónde van los Jobs de OTA válidos. Se fija antes de start().
+    void set_ota_job_queue(QueueHandle_t ota_job_queue);
+
+    // Encola el estado de un Job para que la tarea MQTT lo informe a AWS.
+    // Nunca bloquea; se puede llamar desde cualquier tarea.
+    void report_job_status(const JobUpdate &update);
+#endif
+
 private:
     // Lo que puede pedirle cualquier otra tarea a la tarea MQTT.
     enum class MessageType : std::uint8_t {
@@ -55,8 +67,9 @@ private:
         BrokerDisconnected,
         Publish,
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
-        ShadowSubscribed,
+        AwsSubscribed,
         ShadowState,
+        JobStatusUpdate,
 #endif
     };
 
@@ -67,6 +80,10 @@ private:
         // ShadowState: el intervalo pedido, ya validado, o 0 si el
         // documento no pide ninguno.
         std::uint32_t telemetry_interval_s;
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+        // JobStatusUpdate. Vacío por defecto: los demás mensajes no lo usan.
+        JobUpdate job_update{};
+#endif
     };
     static_assert(std::is_trivially_copyable_v<Message>,
                   "La cola de FreeRTOS copia los mensajes byte a byte");
@@ -76,6 +93,9 @@ private:
     // Hasta que el shadow pida otra cosa, cada medición, como con el
     // broker local.
     static constexpr std::uint32_t DEFAULT_TELEMETRY_INTERVAL_S = 2;
+    // Shadow (4) y Jobs (4), en un solo SUBSCRIBE.
+    static constexpr std::size_t AWS_SUBSCRIPTION_COUNT = 8;
+    static constexpr std::size_t AWS_TOPIC_SIZE = 64;
 #endif
 
     static void task_entry(void *context);
@@ -92,14 +112,18 @@ private:
     esp_err_t initialize();
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
     esp_err_t load_device_identity();
-    void subscribe_shadow();
+    void subscribe_aws_topics();
     void request_shadow();
+    void request_next_job();
     void apply_telemetry_interval(std::uint32_t requested_interval_s);
     void report_shadow();
-    // Corre en la tarea de ESP-MQTT: solo interpreta y pasa el resultado.
-    void handle_shadow_data(const esp_mqtt_event_t &event);
-    bool is_shadow_topic(const esp_mqtt_event_t &event,
-                         const char *suffix) const;
+    void publish_job_status(const JobUpdate &update);
+    // Corren en la tarea de ESP-MQTT: solo interpretan y pasan el resultado.
+    void handle_aws_data(const esp_mqtt_event_t &event);
+    void handle_shadow_data(std::string_view topic, const esp_mqtt_event_t &event);
+    void handle_job_data(const esp_mqtt_event_t &event);
+    // Lo que sigue a "$aws/things/<device ID>/", o vacío si es otro topic.
+    std::string_view aws_topic_suffix(const esp_mqtt_event_t &event) const;
 #endif
     void handle_message(const Message &message);
     void start_transport();
@@ -118,9 +142,17 @@ private:
     // Un certificado RSA 2048 en PEM ronda los 1,2 KB y su clave los 1,7 KB.
     std::array<char, 2048> device_certificate_{};
     std::array<char, 2048> device_key_{};
-    // "$aws/things/<device ID>/shadow/": todos los topics del shadow
-    // cuelgan de acá.
-    std::array<char, 48> shadow_prefix_{};
+    // "$aws/things/<device ID>/": de acá cuelgan los topics del shadow y de
+    // Jobs.
+    std::array<char, 32> thing_prefix_{};
+    // Armados una vez en el constructor y no en el stack de la tarea en
+    // cada conexión: son 512 bytes.
+    std::array<std::array<char, AWS_TOPIC_SIZE>, AWS_SUBSCRIPTION_COUNT>
+        subscription_filters_{};
+    QueueHandle_t ota_job_queue_{nullptr};
+    // Lo arma handle_job_data() antes de copiarlo a la cola: 2,2 KB que no
+    // entran en el stack de la tarea de ESP-MQTT. Solo lo toca esa tarea.
+    OtaJob pending_job_{};
 #endif
     TaskHandle_t task_handle_{nullptr};
     QueueHandle_t queue_{nullptr};

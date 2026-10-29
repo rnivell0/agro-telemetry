@@ -8,14 +8,20 @@
 #include <iterator>
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
 #include "wifi_manager.hpp"
+#if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+#include "aws_jobs.hpp"
+#endif
 
 namespace {
 constexpr char TAG[] = "MQTT_CLIENT";
@@ -49,10 +55,27 @@ constexpr char IDENTITY_NAMESPACE[] = "aws_iot";
  * Device Shadow: desired es lo que pide la nube, reported lo que hace el
  * nodo. El nodo pide el documento al conectarse (get) y AWS le avisa cada
  * cambio de desired (update/delta).
+ *
+ * Jobs: AWS avisa cuando cambia el próximo Job pendiente (notify-next), y
+ * el nodo lo pide al conectarse ($next/get) por si llegó mientras no
+ * estaba. El '+' es el comodín MQTT: un rechazo de cualquier Job propio.
  */
-constexpr const char *SHADOW_SUBSCRIPTIONS[] = {
-    "get/accepted", "get/rejected", "update/delta", "update/rejected"};
-constexpr std::size_t SHADOW_TOPIC_SIZE = 64;
+constexpr const char *AWS_SUBSCRIPTIONS[] = {
+    "shadow/get/accepted",
+    "shadow/get/rejected",
+    "shadow/update/delta",
+    "shadow/update/rejected",
+    "jobs/notify-next",
+    "jobs/$next/get/accepted",
+    "jobs/$next/get/rejected",
+    "jobs/+/update/rejected",
+};
+// Un documento de Job trae la URL firmada (~1,5 KB): con el buffer de
+// 1 KB por defecto, ESP-MQTT lo entregaría partido en varios eventos.
+constexpr int MQTT_RX_BUFFER_SIZE = 4096;
+constexpr int MQTT_TX_BUFFER_SIZE = 1024;
+// "$aws/things/<ID>/jobs/<jobId de hasta 64>/update"
+constexpr std::size_t JOB_UPDATE_TOPIC_SIZE = 128;
 constexpr char SHADOW_INTERVAL_KEY[] = "telemetry_interval_s";
 // El mínimo es el período del sensor: más seguido no hay mediciones nuevas.
 constexpr std::uint32_t MIN_TELEMETRY_INTERVAL_S = 2;
@@ -109,6 +132,85 @@ std::uint32_t parse_telemetry_interval(const char *data,
 #else
 extern const char mqtt_ca_pem_start[] asm("_binary_mqtt_ca_pem_start");
 #endif
+
+/*
+ * Una imagen recién llegada por OTA arranca en PENDING_VERIFY. Llegar al
+ * broker prueba que funcionan Wi-Fi, TLS e identidad, que es lo necesario
+ * para recibir otra OTA que la corrija: con eso se confirma. Si se reinicia
+ * antes, el bootloader vuelve a la imagen anterior. Una imagen grabada por
+ * USB no está a prueba y nada de esto actúa.
+ *
+ * Pero una imagen que arranca y nunca llega al broker no se reiniciaría
+ * sola: quedaría sin confirmar y sin poder recibir otra OTA. Para eso está
+ * el plazo. Es generoso porque una imagen sana con mala señal también
+ * tarda, y descartarla por eso haría fallar un Job que estaba bien.
+ */
+constexpr std::uint64_t IMAGE_VERIFY_TIMEOUT_US = 5ULL * 60 * 1000 * 1000;
+// Lo crea start() y lo borra la tarea MQTT al confirmar: nunca a la vez.
+esp_timer_handle_t image_verify_timer = nullptr;
+
+bool running_image_pending()
+{
+    esp_ota_img_states_t state{};
+    return esp_ota_get_state_partition(esp_ota_get_running_partition(),
+                                       &state) == ESP_OK &&
+           state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
+void reject_running_image(void *)
+{
+    ESP_LOGE(TAG,
+             "El firmware %s no llego al broker a tiempo: vuelta a la imagen "
+             "anterior",
+             esp_app_get_description()->version);
+    esp_ota_mark_app_invalid_rollback_and_reboot();
+}
+
+void start_image_verification()
+{
+    if (!running_image_pending()) {
+        return;
+    }
+
+    esp_timer_create_args_t timer_args{};
+    timer_args.callback = &reject_running_image;
+    timer_args.name = "image_verify";
+    if (esp_timer_create(&timer_args, &image_verify_timer) != ESP_OK ||
+        esp_timer_start_once(image_verify_timer, IMAGE_VERIFY_TIMEOUT_US) !=
+            ESP_OK) {
+        ESP_LOGE(TAG, "No se pudo armar el plazo para confirmar el firmware");
+        return;
+    }
+    ESP_LOGW(TAG,
+             "Firmware %s a prueba: tiene que llegar al broker en %" PRIu64
+             " s",
+             esp_app_get_description()->version,
+             IMAGE_VERIFY_TIMEOUT_US / 1000000);
+}
+
+void confirm_running_image()
+{
+    if (!running_image_pending()) {
+        return;
+    }
+
+    if (image_verify_timer != nullptr) {
+        esp_timer_stop(image_verify_timer);
+        esp_timer_delete(image_verify_timer);
+        image_verify_timer = nullptr;
+    }
+
+    const esp_err_t result = esp_ota_mark_app_valid_cancel_rollback();
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "No se pudo confirmar el firmware nuevo: %s",
+                 esp_err_to_name(result));
+        return;
+    }
+    ESP_LOGI(TAG,
+             "Firmware %s confirmado: se cancela el rollback",
+             esp_app_get_description()->version);
+}
 }
 
 MqttClient::MqttClient(const WifiManager &wifi_manager,
@@ -120,11 +222,19 @@ MqttClient::MqttClient(const WifiManager &wifi_manager,
                   "agro/devices/%s/telemetry",
                   device_id_.data());
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
+    static_assert(std::size(AWS_SUBSCRIPTIONS) == AWS_SUBSCRIPTION_COUNT);
     // El thing se llama igual que el device ID.
-    std::snprintf(shadow_prefix_.data(),
-                  shadow_prefix_.size(),
-                  "$aws/things/%s/shadow/",
+    std::snprintf(thing_prefix_.data(),
+                  thing_prefix_.size(),
+                  "$aws/things/%s/",
                   device_id_.data());
+    for (std::size_t i = 0; i < AWS_SUBSCRIPTION_COUNT; ++i) {
+        std::snprintf(subscription_filters_[i].data(),
+                      subscription_filters_[i].size(),
+                      "%s%s",
+                      thing_prefix_.data(),
+                      AWS_SUBSCRIPTIONS[i]);
+    }
 #endif
 }
 
@@ -182,6 +292,8 @@ esp_err_t MqttClient::start()
         return ESP_ERR_NO_MEM;
     }
 
+    start_image_verification();
+
     // Todavía no existe la tarea MQTT, así que tocar el estado desde acá
     // no compite con nadie.
     const esp_err_t result = initialize();
@@ -234,6 +346,8 @@ esp_err_t MqttClient::initialize()
     configuration.credentials.authentication.certificate =
         device_certificate_.data();
     configuration.credentials.authentication.key = device_key_.data();
+    configuration.buffer.size = MQTT_RX_BUFFER_SIZE;
+    configuration.buffer.out_size = MQTT_TX_BUFFER_SIZE;
     const char *const broker = BROKER_URI;
     const char *const authentication = "certificado X.509";
 #else
@@ -329,38 +443,42 @@ esp_err_t MqttClient::load_device_identity()
     return ESP_OK;
 }
 
-void MqttClient::subscribe_shadow()
+void MqttClient::subscribe_aws_topics()
 {
-    constexpr std::size_t count = std::size(SHADOW_SUBSCRIPTIONS);
-    char filters[count][SHADOW_TOPIC_SIZE]{};
-    esp_mqtt_topic_t topics[count]{};
-    for (std::size_t i = 0; i < count; ++i) {
-        std::snprintf(filters[i],
-                      SHADOW_TOPIC_SIZE,
-                      "%s%s",
-                      shadow_prefix_.data(),
-                      SHADOW_SUBSCRIPTIONS[i]);
-        topics[i] = {filters[i], MQTT_QOS};
+    std::array<esp_mqtt_topic_t, AWS_SUBSCRIPTION_COUNT> topics{};
+    for (std::size_t i = 0; i < AWS_SUBSCRIPTION_COUNT; ++i) {
+        topics[i] = {subscription_filters_[i].data(), MQTT_QOS};
     }
 
     /*
-     * Un solo SUBSCRIBE para los cuatro: un único SUBACK avisa que están
-     * todos, y recién ahí se pide el documento. Si se pidiera antes, la
-     * respuesta podría llegar a un topic al que todavía no se está suscrito.
+     * Un solo SUBSCRIBE para todos: un único SUBACK avisa que están todos,
+     * y recién ahí se piden el shadow y el próximo Job. Si se pidieran
+     * antes, la respuesta podría llegar a un topic sin suscripción.
      */
     if (esp_mqtt_client_subscribe_multiple(
-            client_, topics, static_cast<int>(count)) < 0) {
-        ESP_LOGE(TAG, "No se pudo suscribir al Device Shadow");
+            client_, topics.data(), static_cast<int>(topics.size())) < 0) {
+        ESP_LOGE(TAG, "No se pudo suscribir al shadow y a Jobs");
     }
 }
 
 void MqttClient::request_shadow()
 {
-    char topic[SHADOW_TOPIC_SIZE]{};
-    std::snprintf(topic, sizeof(topic), "%sget", shadow_prefix_.data());
+    char topic[AWS_TOPIC_SIZE]{};
+    std::snprintf(topic, sizeof(topic), "%sshadow/get", thing_prefix_.data());
     if (esp_mqtt_client_enqueue(client_, topic, "", 0, MQTT_QOS, false, true) <
         0) {
         ESP_LOGE(TAG, "No se pudo pedir el Device Shadow");
+    }
+}
+
+void MqttClient::request_next_job()
+{
+    char topic[AWS_TOPIC_SIZE]{};
+    std::snprintf(
+        topic, sizeof(topic), "%sjobs/$next/get", thing_prefix_.data());
+    if (esp_mqtt_client_enqueue(client_, topic, "{}", 2, MQTT_QOS, false, true) <
+        0) {
+        ESP_LOGE(TAG, "No se pudo pedir el proximo Job");
     }
 }
 
@@ -383,16 +501,21 @@ void MqttClient::apply_telemetry_interval(std::uint32_t requested_interval_s)
 
 void MqttClient::report_shadow()
 {
-    char topic[SHADOW_TOPIC_SIZE]{};
-    std::snprintf(topic, sizeof(topic), "%supdate", shadow_prefix_.data());
+    char topic[AWS_TOPIC_SIZE]{};
+    std::snprintf(
+        topic, sizeof(topic), "%sshadow/update", thing_prefix_.data());
 
-    char payload[64]{};
-    const int payload_length =
-        std::snprintf(payload,
-                      sizeof(payload),
-                      "{\"state\":{\"reported\":{\"%s\":%" PRIu32 "}}}",
-                      SHADOW_INTERVAL_KEY,
-                      telemetry_interval_s_);
+    // La versión sale de git describe al compilar (hasta 31 caracteres):
+    // así se ve desde la nube qué firmware corre cada placa.
+    char payload[128]{};
+    const int payload_length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"state\":{\"reported\":{\"%s\":%" PRIu32
+        ",\"firmware_version\":\"%s\"}}}",
+        SHADOW_INTERVAL_KEY,
+        telemetry_interval_s_,
+        esp_app_get_description()->version);
 
     if (esp_mqtt_client_enqueue(client_,
                                 topic,
@@ -405,27 +528,110 @@ void MqttClient::report_shadow()
         return;
     }
     ESP_LOGI(TAG,
-             "Shadow reportado | %s: %" PRIu32 " s",
+             "Shadow reportado | %s: %" PRIu32 " s | firmware: %s",
              SHADOW_INTERVAL_KEY,
-             telemetry_interval_s_);
+             telemetry_interval_s_,
+             esp_app_get_description()->version);
 }
 
-void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
+void MqttClient::set_ota_job_queue(QueueHandle_t ota_job_queue)
 {
-    // Un documento grande llega en varios eventos; los del shadow de este
-    // nodo son chicos, así que uno partido se descarta entero.
+    ota_job_queue_ = ota_job_queue;
+}
+
+void MqttClient::report_job_status(const JobUpdate &update)
+{
+    const Message message{MessageType::JobStatusUpdate, {}, 0, update};
+    if (xQueueSend(queue_, &message, 0) != pdPASS) {
+        ESP_LOGE(TAG,
+                 "Cola MQTT llena: se perdio el estado del Job %s",
+                 update.job_id.data());
+    }
+}
+
+void MqttClient::publish_job_status(const JobUpdate &update)
+{
+    static constexpr const char *STATUS_NAMES[] = {
+        "IN_PROGRESS", "SUCCEEDED", "FAILED"};
+    const char *const status =
+        STATUS_NAMES[static_cast<std::size_t>(update.status)];
+
+    char topic[JOB_UPDATE_TOPIC_SIZE]{};
+    std::snprintf(topic,
+                  sizeof(topic),
+                  "%sjobs/%s/update",
+                  thing_prefix_.data(),
+                  update.job_id.data());
+
+    char payload[128]{};
+    const int payload_length =
+        update.reason != nullptr
+            ? std::snprintf(payload,
+                            sizeof(payload),
+                            "{\"status\":\"%s\",\"statusDetails\":"
+                            "{\"reason\":\"%s\"}}",
+                            status,
+                            update.reason)
+            : std::snprintf(
+                  payload, sizeof(payload), "{\"status\":\"%s\"}", status);
+
+    if (esp_mqtt_client_enqueue(client_,
+                                topic,
+                                payload,
+                                payload_length,
+                                MQTT_QOS,
+                                false,
+                                true) < 0) {
+        ESP_LOGE(TAG,
+                 "No se pudo informar el Job %s a AWS",
+                 update.job_id.data());
+        return;
+    }
+    ESP_LOGI(TAG,
+             "Job %s informado: %s%s%s",
+             update.job_id.data(),
+             status,
+             update.reason != nullptr ? " | " : "",
+             update.reason != nullptr ? update.reason : "");
+}
+
+void MqttClient::handle_aws_data(const esp_mqtt_event_t &event)
+{
+    // Un documento más grande que el buffer llega en varios eventos; los
+    // de este nodo entran en uno, así que uno partido se descarta entero.
     if (event.current_data_offset != 0) {
         return;
     }
     if (event.data_len != event.total_data_len) {
         ESP_LOGW(TAG,
-                 "Documento del shadow de %d bytes partido en varios eventos;"
-                 " se ignora",
+                 "Documento de %d bytes partido en varios eventos; se ignora",
                  event.total_data_len);
         return;
     }
 
-    if (is_shadow_topic(event, "update/delta")) {
+    const std::string_view topic = aws_topic_suffix(event);
+    if (topic.starts_with("shadow/")) {
+        handle_shadow_data(topic, event);
+    } else if (topic == "jobs/notify-next" ||
+               topic == "jobs/$next/get/accepted") {
+        handle_job_data(event);
+    } else if (topic.starts_with("jobs/") && topic.ends_with("/rejected")) {
+        // $next/get/rejected o jobs/<id>/update/rejected. Las respuestas
+        // accepted de un update también llegan, sin suscribirse, y no
+        // requieren nada.
+        ESP_LOGE(TAG,
+                 "AWS rechazo un pedido de Jobs (%.*s): %.*s",
+                 static_cast<int>(topic.size()),
+                 topic.data(),
+                 event.data_len,
+                 event.data);
+    }
+}
+
+void MqttClient::handle_shadow_data(std::string_view topic,
+                                    const esp_mqtt_event_t &event)
+{
+    if (topic == "shadow/update/delta") {
         // Un pedido inválido no se aplica ni se reporta: desired y reported
         // siguen distintos y el delta queda visible en la consola.
         const std::uint32_t interval_s =
@@ -433,10 +639,10 @@ void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
         if (interval_s != 0) {
             post_event(MessageType::ShadowState, interval_s);
         }
-    } else if (is_shadow_topic(event, "get/accepted")) {
+    } else if (topic == "shadow/get/accepted") {
         post_event(MessageType::ShadowState,
                    parse_telemetry_interval(event.data, event.data_len, true));
-    } else if (is_shadow_topic(event, "get/rejected")) {
+    } else if (topic == "shadow/get/rejected") {
         // La primera vez es un 404: el shadow todavía no existe, y lo crea
         // el primer reporte.
         ESP_LOGI(TAG,
@@ -444,7 +650,7 @@ void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
                  event.data_len,
                  event.data);
         post_event(MessageType::ShadowState);
-    } else if (is_shadow_topic(event, "update/rejected")) {
+    } else if (topic == "shadow/update/rejected") {
         ESP_LOGE(TAG,
                  "AWS rechazo el reporte del shadow: %.*s",
                  event.data_len,
@@ -452,18 +658,61 @@ void MqttClient::handle_shadow_data(const esp_mqtt_event_t &event)
     }
 }
 
-bool MqttClient::is_shadow_topic(const esp_mqtt_event_t &event,
-                                 const char *suffix) const
+void MqttClient::handle_job_data(const esp_mqtt_event_t &event)
 {
-    // El topic del evento no termina en '\0': se compara por longitud.
-    const std::size_t prefix_length = std::strlen(shadow_prefix_.data());
-    const std::size_t suffix_length = std::strlen(suffix);
-    return static_cast<std::size_t>(event.topic_len) ==
-               prefix_length + suffix_length &&
-           std::memcmp(event.topic, shadow_prefix_.data(), prefix_length) ==
-               0 &&
-           std::memcmp(event.topic + prefix_length, suffix, suffix_length) ==
-               0;
+    switch (parse_job_execution(event.data, event.data_len, pending_job_)) {
+    case JobParseResult::NoJob:
+        ESP_LOGI(TAG, "No hay Jobs pendientes");
+        return;
+
+    case JobParseResult::Unidentifiable:
+        // Sin un jobId válido no hay topic al que reportar.
+        return;
+
+    case JobParseResult::InvalidDocument:
+        report_job_status(JobUpdate{
+            pending_job_.job_id, JobStatus::Failed, "invalid_document"});
+        return;
+
+    case JobParseResult::Ok:
+        break;
+    }
+
+    /*
+     * Si ya corre la versión que pide el Job, no hay nada que descargar:
+     * o es el arranque después de la OTA (la imagen ya se confirmó al
+     * conectar, antes de suscribirse) o el Job pedía la versión actual.
+     */
+    if (std::strncmp(pending_job_.version.data(),
+                     esp_app_get_description()->version,
+                     pending_job_.version.size()) == 0) {
+        report_job_status(
+            JobUpdate{pending_job_.job_id, JobStatus::Succeeded, nullptr});
+        return;
+    }
+
+    if (ota_job_queue_ == nullptr ||
+        xQueueSend(ota_job_queue_, &pending_job_, 0) != pdPASS) {
+        ESP_LOGW(TAG,
+                 "Job %s ignorado: ya hay una OTA en curso",
+                 pending_job_.job_id.data());
+    }
+}
+
+std::string_view
+MqttClient::aws_topic_suffix(const esp_mqtt_event_t &event) const
+{
+    if (event.topic == nullptr) {
+        return {};
+    }
+    // El topic del evento no termina en '\0': se usa su longitud.
+    const std::string_view topic(event.topic,
+                                 static_cast<std::size_t>(event.topic_len));
+    const std::string_view prefix(thing_prefix_.data());
+    if (!topic.starts_with(prefix)) {
+        return {};
+    }
+    return topic.substr(prefix.size());
 }
 #endif
 
@@ -543,10 +792,12 @@ void MqttClient::handle_message(const Message &message)
     case MessageType::BrokerConnected:
         connected_.store(true);
         ESP_LOGI(TAG, "Conectado al broker MQTT");
+        confirm_running_image();
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
         // Sesión limpia: AWS no guarda las suscripciones de la conexión
-        // anterior, y el desired pudo cambiar mientras el nodo no estaba.
-        subscribe_shadow();
+        // anterior, y el desired o los Jobs pudieron cambiar mientras el
+        // nodo no estaba.
+        subscribe_aws_topics();
 #endif
         break;
 
@@ -559,12 +810,17 @@ void MqttClient::handle_message(const Message &message)
         break;
 
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
-    case MessageType::ShadowSubscribed:
+    case MessageType::AwsSubscribed:
         request_shadow();
+        request_next_job();
         break;
 
     case MessageType::ShadowState:
         apply_telemetry_interval(message.telemetry_interval_s);
+        break;
+
+    case MessageType::JobStatusUpdate:
+        publish_job_status(message.job_update);
         break;
 #endif
     }
@@ -713,22 +969,22 @@ void MqttClient::mqtt_event_handler(void *context,
         break;
 
 #if CONFIG_AGRO_MQTT_BACKEND_AWS_IOT
-    // La única suscripción es la del shadow, así que no hace falta mirar
-    // el msg_id.
+    // El único SUBSCRIBE es el del shadow y Jobs, así que no hace falta
+    // mirar el msg_id.
     case MQTT_EVENT_SUBSCRIBED:
         if (event->error_handle != nullptr &&
             event->error_handle->error_type ==
                 MQTT_ERROR_TYPE_SUBSCRIBE_FAILED) {
             ESP_LOGE(TAG,
-                     "AWS rechazo la suscripcion al Device Shadow: revisar "
+                     "AWS rechazo la suscripcion al shadow o a Jobs: revisar "
                      "la politica del thing");
         } else {
-            mqtt_client->post_event(MessageType::ShadowSubscribed);
+            mqtt_client->post_event(MessageType::AwsSubscribed);
         }
         break;
 
     case MQTT_EVENT_DATA:
-        mqtt_client->handle_shadow_data(*event);
+        mqtt_client->handle_aws_data(*event);
         break;
 #endif
 
