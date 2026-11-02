@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Agro Telemetry: temperatura y humedad de cada nodo como métricas de
+  CloudWatch, con un dashboard. Una regla de IoT convierte las lecturas en
+  métricas, a razón de una por minuto por nodo. Borrar el stack borra todo
+  menos las métricas ya guardadas, que CloudWatch descarta solo.
+
+Parameters:
+  EdgeClientId:
+    Type: String
+    Default: agro-edge
+    Description: >-
+      Client ID del bridge del edge (ver edge-bridge.yaml). Lo que llega por
+      él se muestrea; lo que llega directo de un nodo pasa entero.
+  SampleEvery:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: >-
+      Del edge se toma una de cada tantas lecturas. Los nodos leen cada 2 s,
+      así que 30 da una por minuto.
+  ErrorLogGroupName:
+    Type: String
+    Default: /agro/iot-rule-errors
+    Description: >-
+      Log group para los errores de la regla. El de telemetry-storage.yaml,
+      que ya existe; este stack no lo crea.
+
+Resources:
+  # Lo asume IoT al ejecutar la regla. Solo puede publicar métricas en el
+  # namespace Agro y escribir errores en el log group de las reglas.
+  RuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: iot.amazonaws.com
+            Action: sts:AssumeRole
+            # Que solo lo pueda asumir IoT en nombre de esta cuenta y de esta
+            # regla (confused deputy).
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/agro_telemetry_to_cloudwatch
+      Policies:
+        - PolicyName: put-telemetry-metrics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                # PutMetricData no se puede limitar por recurso, solo por
+                # namespace.
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Agro
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ErrorLogGroupName}:*
+
+  MetricsRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: agro_telemetry_to_cloudwatch
+      TopicRulePayload:
+        Description: Publica temperatura y humedad como métricas, una por minuto por nodo.
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        # Cada llamada a PutMetricData cuenta contra el millón gratis por mes,
+        # y una por lectura cada 2 s lo pasaría varias veces. El edge reenvía
+        # cada lectura, así que se toma una de cada SampleEvery. Un nodo
+        # directo ya manda a su propio intervalo, fijado desde el shadow, y
+        # sus números de secuencia no caen en múltiplos fijos: pasa entero.
+        Sql: !Sub >-
+          SELECT temperature_c, humidity_pct
+          FROM 'agro/devices/+/telemetry'
+          WHERE device_id = topic(3)
+          AND (clientid() <> '${EdgeClientId}' OR sequence % ${SampleEvery} = 0)
+        # La acción de IoT no admite dimensiones: el nodo va en el nombre de
+        # la métrica, y el dashboard las encuentra con SEARCH.
+        Actions:
+          - CloudwatchMetric:
+              MetricNamespace: Agro
+              MetricName: ${topic(3)}/temperature_c
+              MetricValue: ${temperature_c}
+              MetricUnit: None
+              RoleArn: !GetAtt RuleRole.Arn
+          - CloudwatchMetric:
+              MetricNamespace: Agro
+              MetricName: ${topic(3)}/humidity_pct
+              MetricValue: ${humidity_pct}
+              MetricUnit: Percent
+              RoleArn: !GetAtt RuleRole.Arn
+        ErrorAction:
+          CloudwatchLogs:
+            LogGroupName: !Ref ErrorLogGroupName
+            RoleArn: !GetAtt RuleRole.Arn
+
+  # SEARCH encuentra las métricas de cualquier nodo por el final de su
+  # nombre, así que un nodo nuevo aparece solo, sin tocar el dashboard.
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: agro-telemetry
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric", "x": 0, "y": 0, "width": 12, "height": 7,
+              "properties": {
+                "title": "Temperatura (°C)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "period": 60,
+                "metrics": [[{ "expression": "SEARCH('{Agro} temperature_c', 'Average', 60)", "id": "temperature" }]]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 0, "width": 12, "height": 7,
+              "properties": {
+                "title": "Humedad (%)",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "period": 60,
+                "metrics": [[{ "expression": "SEARCH('{Agro} humidity_pct', 'Average', 60)", "id": "humidity" }]]
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardName:
+    Value: !Ref Dashboard
+  RuleName:
+    Value: !Ref MetricsRule
