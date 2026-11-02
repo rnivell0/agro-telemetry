@@ -12,3 +12,8 @@ mosquitto/data/*
 mosquitto/log/*
 !mosquitto/log/.gitkeep
 
+# Bridge to AWS IoT Core: the active config carries the account's endpoint,
+# and the edge's certificate folder holds its private key.
+mosquitto/config/conf.d/*
+!mosquitto/config/conf.d/.gitkeep
+mosquitto/certs/aws/

@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Agro Telemetry: identidad en AWS IoT Core del broker local, que actúa como
+  edge y reenvía la telemetría de todos los nodos por un bridge de Mosquitto.
+  Un thing, su certificado y una política que solo deja publicar telemetría.
+  Borrar el stack borra todo.
+
+Parameters:
+  CertificateSigningRequest:
+    Type: String
+    Description: >-
+      CSR en PEM de la clave del edge. La clave se genera en la PC y nunca
+      sale de ahí: AWS solo firma el certificado.
+  EdgeNodeIds:
+    Type: CommaDelimitedList
+    Description: >-
+      Nodos que llegan a AWS por el edge, separados por comas (por ejemplo
+      esp32-5df414,esp32-1e1574). El edge solo puede publicar en nombre de
+      ellos, no de un nodo que va directo con su propio certificado.
+
+Resources:
+  EdgeThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: agro-edge
+
+  EdgeCertificate:
+    Type: AWS::IoT::Certificate
+    Properties:
+      CertificateSigningRequest: !Ref CertificateSigningRequest
+      Status: ACTIVE
+
+  # Como la política de los nodos, pero el edge publica en nombre de varios.
+  # En el broker local todos los nodos comparten contraseña, así que quien la
+  # tenga puede publicar con el client ID de cualquiera; por eso el límite va
+  # acá, del lado de AWS: solo los topics de los nodos de EdgeNodeIds.
+  EdgePolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: agro-edge
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: iot:Connect
+            # Solo resuelve si el client ID es un thing dueño del certificado.
+            Resource: !Sub "arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${!iot:Connection.Thing.ThingName}"
+          - Effect: Allow
+            Action: iot:Publish
+            # Un ARN por nodo: se unen los IDs con el final de un ARN y el
+            # principio del siguiente, y se separa de nuevo en una lista.
+            # Fn::Join no acepta funciones como separador, así que región y
+            # cuenta van como *, igual que en node-policy.json: una política
+            # de IoT solo vale en su propia cuenta y región.
+            Resource: !Split
+              - ","
+              - !Sub
+                - "arn:aws:iot:*:*:topic/agro/devices/${NodeIds}/telemetry"
+                - NodeIds: !Join
+                    - "/telemetry,arn:aws:iot:*:*:topic/agro/devices/"
+                    - !Ref EdgeNodeIds
+
+  EdgePolicyAttachment:
+    Type: AWS::IoT::PolicyPrincipalAttachment
+    Properties:
+      PolicyName: !Ref EdgePolicy
+      Principal: !GetAtt EdgeCertificate.Arn
+
+  EdgeThingAttachment:
+    Type: AWS::IoT::ThingPrincipalAttachment
+    Properties:
+      ThingName: !Ref EdgeThing
+      Principal: !GetAtt EdgeCertificate.Arn
+
+Outputs:
+  CertificateId:
+    Description: Para bajar el certificado firmado con aws iot describe-certificate.
+    Value: !Ref EdgeCertificate
