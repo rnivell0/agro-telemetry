@@ -1,0 +1,43 @@
+# Bridge del broker local a AWS IoT Core: reenvía la telemetría de todos los
+# nodos con la identidad del thing agro-edge (ver aws/edge-bridge.yaml).
+#
+# Para activarlo, copiar este archivo a conf.d/aws-bridge.conf (ignorado por
+# git, porque lleva el endpoint de la cuenta) y completar address. Sin ese
+# archivo el broker funciona igual, solo en local.
+
+connection aws-iot
+# aws iot describe-endpoint --endpoint-type iot:Data-ATS
+address <endpoint>-ats.iot.<region>.amazonaws.com:8883
+bridge_protocol_version mqttv311
+
+# TLS mutuo: el broker verifica a AWS con Amazon Root CA 1 y se identifica
+# con el certificado del edge. La clave nunca sale de la PC.
+bridge_cafile /mosquitto/certs/aws/AmazonRootCA1.pem
+bridge_certfile /mosquitto/certs/aws/edge.crt
+bridge_keyfile /mosquitto/certs/aws/edge.key
+bridge_insecure false
+
+# La política solo deja conectarse con el nombre del thing.
+remote_clientid agro-edge
+
+# AWS no entiende la marca de bridge de Mosquitto ni deja publicar en los
+# topics de estado que Mosquitto usaría para avisar si el bridge está arriba.
+try_private false
+notifications false
+
+# Sesión persistente en los dos lados: mientras no hay Internet, el broker
+# local guarda para el bridge los mensajes QoS 1 y los manda al volver.
+cleansession false
+local_cleansession false
+
+keepalive_interval 60
+start_type automatic
+# Reintentos con espera creciente de 10 s a 120 s, para no insistir contra
+# AWS cada pocos segundos durante un corte largo.
+restart_timeout 10 120
+
+# Solo telemetría, solo hacia la nube. Con QoS 1, AWS confirma cada mensaje.
+# Un topic por nodo, los mismos de EdgeNodeIds en el stack: AWS corta la
+# conexión del bridge si recibe un publish que la política no permite.
+topic agro/devices/esp32-5df414/telemetry out 1
+topic agro/devices/esp32-1e1574/telemetry out 1
