@@ -18,6 +18,16 @@ class Threshold:
     alarm_above: float
     clear_below: float
 
+    def __post_init__(self):
+        # Con clear_below por encima de alarm_above, una lectura entre los
+        # dos entra y sale de alarma cada vez: un mail por lectura. Mejor
+        # que la Lambda no arranque, con el motivo en su log.
+        if self.clear_below > self.alarm_above:
+            raise ValueError(
+                f"{self.metric}: clear_below ({self.clear_below}) no puede "
+                f"superar alarm_above ({self.alarm_above})"
+            )
+
 
 def next_state(current: str | None, value: float, threshold: Threshold) -> str | None:
     """Devuelve el estado nuevo, o None si la lectura no lo cambia.

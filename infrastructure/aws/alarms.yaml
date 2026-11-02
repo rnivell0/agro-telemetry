@@ -14,7 +14,9 @@ Description: >-
 #     --stack-name agro-alarms --capabilities CAPABILITY_IAM \
 #     --parameter-overrides AlarmEmail=<mail>
 #
-# Los umbrales tienen que cumplir ClearBelow < AlarmAbove: es la histéresis.
+# Los umbrales tienen que cumplir ClearBelow <= AlarmAbove: es la histéresis.
+# CloudFormation no puede comparar números, así que lo verifica la Lambda al
+# arrancar (alarm_logic.Threshold).
 
 Parameters:
   AlarmEmail:
@@ -32,8 +34,10 @@ Parameters:
     MinValue: 1
     Description: >-
       Del edge se toma una de cada tantas lecturas. Los nodos leen cada 2 s,
-      así que 5 da una cada 10 s: menos de 600 mil invocaciones por mes con
-      dos nodos, dentro del millón gratis de Lambda.
+      así que 5 da una cada 10 s: unas 520 mil invocaciones por mes con dos
+      nodos. Un nodo directo pasa entero a su intervalo del shadow (el
+      living, a 60 s: 43 mil); a 2 s sumaría 1,3 millones y pasaría el
+      millón gratis de Lambda.
   TemperatureAlarmAbove:
     Type: Number
     Default: 30

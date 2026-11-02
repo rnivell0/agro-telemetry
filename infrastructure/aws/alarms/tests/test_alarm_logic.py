@@ -54,6 +54,16 @@ class NextStateTest(unittest.TestCase):
         self.assertEqual(changes, [ALARM, OK])
 
 
+class ThresholdTest(unittest.TestCase):
+    def test_inverted_hysteresis_is_rejected(self):
+        with self.assertRaises(ValueError):
+            Threshold("humidity_pct", "Humedad", "%", alarm_above=72.0, clear_below=75.0)
+
+    def test_equal_thresholds_are_accepted(self):
+        # Sin histéresis, pero sin oscilar: alarma por encima, OK por debajo.
+        Threshold("humidity_pct", "Humedad", "%", alarm_above=75.0, clear_below=75.0)
+
+
 class IsReadingTest(unittest.TestCase):
     def test_numbers_are_readings(self):
         self.assertTrue(is_reading(25))
