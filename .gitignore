@@ -24,6 +24,9 @@ gateway/build/
 # Local assistant notes, intentionally not part of the repo
 CLAUDE.md
 
+# Python bytecode, e.g. from running the alarms Lambda's tests
+__pycache__/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

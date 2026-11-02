@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Agro Telemetry: alarmas por umbral. Una regla de IoT invoca una Lambda con
+  cada lectura muestreada; cuando un nodo entra o sale de alarma, la Lambda
+  guarda el evento en DynamoDB y avisa por mail con SNS. Borrar el stack
+  borra todo.
+
+# El código de la Lambda está en alarms/src. package lo comprime, lo sube a
+# un bucket y escribe una copia de la plantilla que apunta a ese zip:
+#
+#   aws cloudformation package --template-file alarms.yaml \
+#     --s3-bucket <bucket> --output-template-file alarms.packaged.yaml
+#   aws cloudformation deploy --template-file alarms.packaged.yaml \
+#     --stack-name agro-alarms --capabilities CAPABILITY_IAM \
+#     --parameter-overrides AlarmEmail=<mail>
+#
+# Los umbrales tienen que cumplir ClearBelow <= AlarmAbove: es la histéresis.
+# CloudFormation no puede comparar números, así que lo verifica la Lambda al
+# arrancar (alarm_logic.Threshold).
+
+Parameters:
+  AlarmEmail:
+    Type: String
+    Description: >-
+      Mail que recibe las alarmas. SNS manda primero un mail de
+      confirmación: hasta aceptarlo no llega nada.
+  EdgeClientId:
+    Type: String
+    Default: agro-edge
+    Description: Client ID del bridge del edge (ver edge-bridge.yaml).
+  SampleEvery:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: >-
+      Del edge se toma una de cada tantas lecturas. Los nodos leen cada 2 s,
+      así que 5 da una cada 10 s: unas 520 mil invocaciones por mes con dos
+      nodos. Un nodo directo pasa entero a su intervalo del shadow (el
+      living, a 60 s: 43 mil); a 2 s sumaría 1,3 millones y pasaría el
+      millón gratis de Lambda.
+  TemperatureAlarmAbove:
+    Type: Number
+    Default: 30
+  TemperatureClearBelow:
+    Type: Number
+    Default: 29
+  HumidityAlarmAbove:
+    Type: Number
+    Default: 75
+  HumidityClearBelow:
+    Type: Number
+    Default: 72
+  RetentionDays:
+    Type: Number
+    Default: 30
+    # CloudWatch Logs solo acepta estas retenciones.
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+    Description: Días que se guardan los eventos y los logs de la Lambda.
+  ErrorLogGroupName:
+    Type: String
+    Default: /agro/iot-rule-errors
+    Description: >-
+      Log group para los errores de la regla. El de telemetry-storage.yaml,
+      que ya existe; este stack no lo crea.
+
+Resources:
+  # El estado actual de cada nodo (sk = STATE) y un evento por cada cambio
+  # (sk = EVENT#...). Ver handler.py.
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: agro-events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      # Solo los eventos llevan expires_at; la fila de estado no vence.
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: agro-alarms
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # Creado acá y no por Lambda al primer log, para que tenga retención y se
+  # borre con el stack.
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/agro-alarms
+      RetentionInDays: !Ref RetentionDays
+
+  # Lo asume la Lambda al ejecutarse. Solo toca su tabla, su tópico y su
+  # log group.
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: alarms
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlarmTopic
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt FunctionLogGroup.Arn
+
+  AlarmFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: agro-alarms
+      Runtime: python3.13
+      # Graviton: el mismo código, más barato por milisegundo.
+      Architectures: [arm64]
+      Handler: handler.handler
+      # Ruta local: aws cloudformation package la reemplaza por el zip en S3.
+      Code: alarms/src
+      MemorySize: 128
+      Timeout: 10
+      Role: !GetAtt FunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref FunctionLogGroup
+      Environment:
+        Variables:
+          EVENTS_TABLE: !Ref EventsTable
+          ALARM_TOPIC_ARN: !Ref AlarmTopic
+          RETENTION_DAYS: !Ref RetentionDays
+          TEMPERATURE_ALARM_ABOVE: !Ref TemperatureAlarmAbove
+          TEMPERATURE_CLEAR_BELOW: !Ref TemperatureClearBelow
+          HUMIDITY_ALARM_ABOVE: !Ref HumidityAlarmAbove
+          HUMIDITY_CLEAR_BELOW: !Ref HumidityClearBelow
+
+  # Deja que IoT invoque la Lambda, pero solo desde esta regla y esta cuenta.
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AlarmFunction
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/agro_telemetry_to_alarms
+
+  # Lo asume IoT solo para escribir los errores de la regla. Invocar la
+  # Lambda no pasa por un rol: lo autoriza InvokePermission.
+  RuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: iot.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:rule/agro_telemetry_to_alarms
+      Policies:
+        - PolicyName: write-rule-errors
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${ErrorLogGroupName}:*
+
+  AlarmRule:
+    Type: AWS::IoT::TopicRule
+    # Sin el permiso, las primeras invocaciones fallarían.
+    DependsOn: InvokePermission
+    Properties:
+      RuleName: agro_telemetry_to_alarms
+      TopicRulePayload:
+        Description: Invoca la Lambda de alarmas con cada lectura muestreada.
+        AwsIotSqlVersion: "2016-03-23"
+        RuleDisabled: false
+        # Como en las otras reglas, la identidad sale del topic. Del edge se
+        # toma una de cada SampleEvery lecturas; un nodo directo pasa entero.
+        # La Lambda se invoca en forma asíncrona: si falla, Lambda la
+        # reintenta dos veces.
+        Sql: !Sub >-
+          SELECT topic(3) AS device_id,
+          timestamp() AS received_at,
+          temperature_c, humidity_pct
+          FROM 'agro/devices/+/telemetry'
+          WHERE device_id = topic(3)
+          AND (clientid() <> '${EdgeClientId}' OR sequence % ${SampleEvery} = 0)
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt AlarmFunction.Arn
+        ErrorAction:
+          CloudwatchLogs:
+            LogGroupName: !Ref ErrorLogGroupName
+            RoleArn: !GetAtt RuleRole.Arn
+
+Outputs:
+  EventsTable:
+    Value: !Ref EventsTable
+  FunctionName:
+    Value: !Ref AlarmFunction
+  RuleName:
+    Value: !Ref AlarmRule

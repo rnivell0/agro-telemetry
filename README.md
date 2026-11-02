@@ -22,7 +22,7 @@ Everything to the right of the ESP32 runs on one machine with Docker Compose. Th
 |---|---|
 | [`firmware/`](firmware/) | ESP-IDF 6 project for an ESP32 DevKit V1: FreeRTOS tasks in C++20 |
 | [`gateway/`](gateway/) | C++17 service: MQTT subscriber → validation → InfluxDB writer, with unit tests |
-| [`infrastructure/`](infrastructure/) | Docker Compose stack: Mosquitto, InfluxDB, gateway, Grafana |
+| [`infrastructure/`](infrastructure/) | Docker Compose stack: Mosquitto, InfluxDB, gateway, Grafana; plus the AWS experiment's CloudFormation stacks and Lambda in `aws/` |
 
 ## How it works
 
@@ -69,6 +69,34 @@ A node can publish to AWS IoT Core instead of the local broker: a Kconfig choice
 - **Storage in DynamoDB.** `infrastructure/aws/telemetry-storage.yaml` is a CloudFormation stack: an IoT rule writes each message to the `agro-telemetry` table, with `device_id` as partition key and arrival time (ms) as sort key. As in the gateway, the identity comes from the topic (`topic(3)`) and a payload claiming another device is dropped; fields are listed one by one instead of `SELECT *`. Rows expire through TTL after `RetentionDays` (7 by default), rule errors go to CloudWatch Logs, and the rule's IAM role can only `PutItem` on that table and can only be assumed by IoT for this account and this rule. Tested with the living-room node: a row every 2 s, with `expires_at` exactly 7 days after arrival. Deleting the stack removes all of it.
 - **Device Shadow: how often to send, set from the cloud.** The shadow's `desired.telemetry_interval_s` (an integer from 2 to 3600, 2 by default) sets how often the node sends a reading to AWS. The sensor still reads every 2 s and the OLED shows every reading; only what goes to the cloud thins out, so `sequence` in DynamoDB jumps by `interval / 2`. On every connection the node subscribes to its shadow topics with a single SUBSCRIBE, requests the document (`get`) once the SUBACK arrives, applies `desired` and reports it back in `reported`. Later changes arrive as `update/delta`. An invalid value is neither applied nor reported, so the delta stays visible. Tested on the living-room node: the first boot got a 404 (no shadow yet) and reported 2; a change to 30 was applied and reported within 2 s; a 1 was rejected and left the delta in place without a report loop; after a reset, the node picked up 30 from `get` 8.4 s after boot, without anyone touching the console. Until that document arrives, a reading or two go out at the default interval. The shadow logic costs about 600 B of the MQTT task's stack (1120 B still free).
 - **Over-the-air updates with IoT Jobs.** `python tools/ota_release.py <.bin> --thing <ID> --bucket <BucketName> --role-arn <SigningRoleArn>` reads the version and the SHA-256 the build appends to the image, uploads it to a private S3 bucket and creates a Job. `infrastructure/aws/firmware-updates.yaml` holds the bucket, the role IoT uses to presign the download URL (it can only read `firmware/*`), and the `agro-iot-cli` user that may upload and create Jobs (`iam:PassRole` only for that role, only towards IoT). On the node, `MqttClient` handles the Jobs topics like the shadow ones and hands a validated Job to `OtaUpdater`, its own task, because downloading ~1 MB over HTTPS takes about a minute and the MQTT task must keep running. `OtaUpdater` checks the image header's version against the Job before downloading the rest, lets `esp_https_ota` validate the image, compares its SHA-256 with the Job's and reboots. The new image boots on probation: it confirms itself only when it reaches the broker, and if it reboots first, or does not reach the broker within 5 minutes, the bootloader goes back to the previous one. The new image reports `SUCCEEDED`; the old one, after a rollback, reports `FAILED` (`rolled_back`) instead of downloading the failed version again. Rollback is a bootloader option, so each board gets it once over USB. Tested on the living-room node: updates in both directions between the two OTA partitions (about 70 s at ~15 KB/s, telemetry still flowing), a power cut during the new image's first boot rolled back to the previous one with the Job marked `FAILED`, and the current firmware itself was delivered over the air. `OtaUpdater` peaked at ~4.4 KB of stack with the TLS handshake to S3 and runs with 6 KB.
+- **Dashboard in CloudWatch.** `infrastructure/aws/telemetry-dashboard.yaml`: an IoT rule turns each reading into two metrics in the `Agro` namespace, and a dashboard graphs every node's temperature and humidity. The IoT action cannot add dimensions, so the node goes in the metric name (`esp32-1e1574/temperature_c`) and the dashboard finds them with `SEARCH`: a new node shows up without editing it. Each metric write counts against the free tier, so edge readings are sampled to one a minute. The rule's role can only write metrics in `Agro`.
+- **Threshold alarms with Lambda.** `infrastructure/aws/alarms.yaml` plus the Python code in `infrastructure/aws/alarms/`. An IoT rule invokes the `agro-alarms` Lambda with each reading (one every 10 s from the edge). When a node goes above or back below a threshold, the Lambda stores the event in the `agro-events` DynamoDB table and sends an email through SNS; a reading that changes nothing writes nothing. Alarms have hysteresis (humidity alarms above 75 % and clears below 72 % by default), so a value hovering around the threshold does not send an email per reading. Each node's state lives in DynamoDB, not in the Lambda's memory, because AWS recycles and runs several Lambda instances at once; the change is a conditional write, so if two invocations see the same crossing only one sends the email. The decision itself is a pure function in `alarm_logic.py`, unit-tested without AWS (`python -m unittest discover -s infrastructure/aws/alarms/tests`). Deployed with `aws cloudformation package`, which uploads the code to S3. Tested on the living-room node: breathing on the sensor sent "high humidity" at 92.5 % and, later, "back to normal" at 61 %. Known gaps: if the Lambda stores the new state and then fails before writing the event or publishing, its retry sees the state already changed and that event and email are lost; an invocation that fails all its retries is dropped, with no dead-letter queue; and readings are timestamped on arrival and Lambda runs them in no guaranteed order, so after an outage the edge's backlog can send alarms for conditions that are already over.
+
+#### Two paths to AWS: direct and through an edge
+
+The three nodes reach AWS in two different ways, on purpose, to compare them:
+
+```mermaid
+flowchart LR
+    L[Living room<br/>esp32-5de31c] -->|own certificate<br/>MQTT over TLS| A[AWS IoT Core]
+    B[Bathroom · Bedroom<br/>esp32-5df414 · esp32-1e1574] -->|password<br/>MQTT over TLS| M[Mosquitto on the PC]
+    M -->|bridge, as thing agro-edge<br/>mutual TLS| A
+    M --> G[Gateway → InfluxDB → Grafana]
+```
+
+- **Direct (living room):** the firmware's AWS variant described above, with its own certificate, shadow and OTA.
+- **Through the edge (bathroom and bedroom):** the nodes keep the local firmware and talk to Mosquitto on the PC. A Mosquitto bridge (`infrastructure/mosquitto/config/aws-bridge.conf.example`, copied into `conf.d/`, which is git-ignored because it holds the account endpoint) forwards their telemetry to IoT Core with QoS 1, as one identity: the thing `agro-edge`, from `infrastructure/aws/edge-bridge.yaml`. Its key is generated on the PC and AWS only signs a CSR, so the private key never travels. Its policy only allows publishing on the topics of the nodes listed in `EdgeNodeIds`: the local password is shared, so with a wildcard anyone holding it could publish to AWS as the living-room node. With a persistent session and `max_queued_messages 10000`, Mosquitto holds almost three hours of readings for the bridge while the Internet is down (two nodes every 2 s is one message a second).
+- **Why not AWS IoT Greengrass,** the managed edge runtime: it is blocked on AWS free-plan accounts, and moving to a paid plan removes the automatic stop when the credit runs out.
+
+| | Through the edge | Direct |
+|---|---|---|
+| What AWS sees | One connection, `agro-edge`, publishing for several nodes | One connection per node |
+| Who prevents impersonation | The Mosquitto ACL with a shared password, then the edge's policy | The AWS policy: a certificate only works for its own thing |
+| Without Internet | Grafana keeps working; AWS gets the backlog later | Readings to AWS are lost |
+| If the PC goes down | Everything stops: single point of failure | Unaffected |
+| Control from the cloud | None: no shadow, no OTA | Shadow and OTA per node |
+
+For this application, a few nodes at home with Wi-Fi and TLS, direct is the better fit. The edge is the pattern of a plant, where field devices cannot or should not reach the Internet themselves and the network needs a single exit. The question underneath is where the trust boundary sits: with the edge, AWS trusts the PC and the PC trusts the LAN; with direct, AWS trusts each board. Not measured yet: what happens to the edge's queue during an actual Internet outage.
 
 The local stack stays the main system; AWS is a learning experiment on a free-plan account, not something left running.
 
@@ -168,4 +196,5 @@ ctest --test-dir build --output-on-failure
 ## What's next
 
 Planned, not built:
+- Cut the Internet on purpose and measure both paths to AWS: what each one loses, and how long the edge takes to drain its queue.
 - A second I2C sensor on the bus the OLED already uses.

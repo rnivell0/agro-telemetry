@@ -79,6 +79,8 @@ Resources:
         # cada lectura, así que se toma una de cada SampleEvery. Un nodo
         # directo ya manda a su propio intervalo, fijado desde el shadow, y
         # sus números de secuencia no caen en múltiplos fijos: pasa entero.
+        # El living manda cada 60 s; a 2 s, el valor por defecto, él solo
+        # pasaría el millón gratis.
         Sql: !Sub >-
           SELECT temperature_c, humidity_pct
           FROM 'agro/devices/+/telemetry'
