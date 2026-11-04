@@ -190,3 +190,7 @@ ctest --test-dir build --output-on-failure
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
 - InfluxDB keeps 30 days of data.
 - OTA images are not signed: the node trusts whoever can create Jobs in the account, and the SHA-256 in the Job only proves the image is the one that operator chose. Secure Boot or signed images would remove that trust.
+
+## License
+
+[MIT](LICENSE).
