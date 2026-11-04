@@ -12,7 +12,7 @@ flowchart LR
     I --> F[Grafana]
 ```
 
-Everything to the right of the ESP32 runs on one machine with Docker Compose. The status is honest: this is a bench prototype with three nodes powered over USB, not a field deployment.
+Everything to the right of the ESP32 runs on one machine with Docker Compose. It runs at home with three nodes, but the number is not built in: every board runs the same firmware, and a new one shows up in Grafana without any per-board configuration.
 
 > Code comments, log messages and commit messages are in Spanish; this README is in English.
 
@@ -184,17 +184,9 @@ ctest --test-dir build --output-on-failure
 
 ## Known limitations
 
-- Three nodes, on the bench, powered over USB.
-- One node has gone silent twice, for 2.5 h and 10 min, without rebooting and without reaching the broker, and came back only after a power cycle; the reset button did not help. The other two nodes, on the same firmware, had no gaps. Not yet diagnosed: the power supply and the Wi-Fi signal where it is placed are the main suspects.
 - All nodes share one MQTT user and password. The ACL keeps each client ID on its own topic, but anyone holding the shared password can connect with another node's client ID and publish as that node. Per-node client certificates (mutual TLS) would close this.
 - On the local broker, TLS is server-side only: the broker is verified, clients authenticate with passwords. Only the AWS variant uses client certificates.
 - Without flash encryption, a board's AWS private key can be read from its `certs` partition by anyone with the board in hand. If that happens, the certificate is revoked in AWS and only that board is affected.
 - Readings taken while the broker is unreachable are dropped, not buffered. Only messages that ESP-MQTT has already accepted are retried under QoS 1.
 - InfluxDB keeps 30 days of data.
 - OTA images are not signed: the node trusts whoever can create Jobs in the account, and the SHA-256 in the Job only proves the image is the one that operator chose. Secure Boot or signed images would remove that trust.
-
-## What's next
-
-Planned, not built:
-- Cut the Internet on purpose and measure both paths to AWS: what each one loses, and how long the edge takes to drain its queue.
-- A second I2C sensor on the bus the OLED already uses.
